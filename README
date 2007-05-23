@@ -1,0 +1,154 @@
+-*- outline -*-
+
+See general info after the "Versions" detail.
+
+* Versions
+
+The following are version numbers (tags) found in the SNS CVS
+repository. The original sources from the APS use different numbers!
+
+** R4-10
+Update for R3.14.8.2
+
+** R4-9
+Based on APS autosave_R4-2, fetched Sept 22, 2006.
+We use R4-9 at the SNS because this version of autosave
+generates '*.sav' files that start with
+   '# save/restore V4.9'.
+They used 'asApp' with MEDM files, I kept 'autosaveApp' with EDM files.
+More important, I kept the generated library names,
+so an IOC update now only means changing the RELEASE
+file entry, no further Makefile or DBD changes required.
+
+These APS sources seem to include the name length fixes
+that we added at the SNS.
+It added errno checks, which for some reason fail most of
+the time with our NFS setup, so I commented several out,
+still leaving more errno checks in place than we had in R4-6-2.
+
+What's really new:
+
+Autosave provides a command-line tool for
+1) creating save files
+2) comparing save files with live values.
+Run $SHARE/autosave/..../bin/$EPICS_HOST_ARCH/asVerify
+to see command-line options.
+
+
+** R4-6-2
+Pam noticed that save_restore couldn't connect to a ..SR_0_Status
+PV even though the ..SR_0_Time PV worked fine.
+Turns out that save_restore thought the overall ..._Status PV name
+was too long, when really it was only confused:
+
+It's allowed to be PV_NAME_LEN (80) characters long, but the name
+assembly only used STRING_LEN (40), which didn't cut it in this case.
+
+Change:
+
+diff -r1.3 save_restore.c
+633c633
+<                               n = (STRING_LEN-1) - sprintf(plist->status_PV, "%sSR_%1d_", status_prefix, plist->listNumber);
+---
+>                               n = (PV_NAME_LEN-1) - sprintf(plist->status_PV, "%sSR_%1d_", status_prefix, plist->listNumber);
+
+** R4-6-1
+Based on the APS code that creates '*.sav' files
+with a 'V4.6' header, this is the first SNS
+version.
+Added README details and EDM file.
+Removed references to 'errno' because that didn't
+work on vxWorks: For some reason, errno got set
+during file writes even though the file access
+worked OK. Informed Tim Mooney who might follow
+up with more, but meanwhile 'errno' is ignored
+just as it was ignored with the autoSaveRestore
+versions previously used at the SNS.
+
+** Initial
+This is the autosave/restore program obtained from the APS.
+We have tested on the following systems:
+-- vxWorks 6.0/6.1 (done by ELW on 30 Oct. 2005)
+
+Documentation can be found in the documentation subdirectory.
+
+
+* autosave
+This is meant to replace 'autoSaveRestore',
+because it now supports array PVs,
+and the autoSaveRestore code had some errors
+in the softIOC shell integration.
+
+* Upgrading from autoSaveRestore
+- The name changed from 'autoSaveRestore' to 'autosave',
+  so adjust your configure/RELEASE file.
+  Change e.g.
+    AUTOSAVERESTORE=$(SHARE_RELEASE)/autoSaveRestore/R3-9-5
+  into
+    AUTOSAVE=$(SHARE_RELEASE)/autosave/R4-6-1
+
+- Applications that linked
+    ...LIBS += autoSaveRestore
+  now need
+    ...LIBS += autosave
+
+- In your dbd file, change
+    include "autoSaveRestore.dbd"
+  into
+    include "autosave.dbd"
+
+- If your startup file set
+    reboot_restoreDatedBU=<0 or 1>,
+  that needs to be changed into
+    save_restoreSet_DatedBackupFiles(0 or 1)
+
+- In your startup file, you might want to load
+  the new status records:
+
+    # Soft-IOC syntax:
+    cd ${AUTOSAVE}
+
+    # On vxWorks:
+    cd autosave
+
+    # Replace $(S), $(SS), $(N) with your system, subsys, instance.
+    dbLoadRecords("db/save_restoreStatus.db", "P=$(S)_$(SS):IOC$(N):")
+    save_restoreSet_status_prefix("$(S)_$(SS):IOC$(N):")
+
+* Functional Differences
+Kay successfully rebooted a soft IOC and a vxWorks IOC
+after an upgrade as described above.
+The old request files still worked,
+the '*.sav' files were read OK, so
+the reboot was bumpless.
+Numeric and string PVs worked,
+including a leading and trailing space.
+Ernest successfully tested waveform PVs.
+
+Strangely, the order in which PVs are dumped
+into the save files now matches the order in
+which you list them in the request file,
+while the previous version 
+(autoSaveRestore, aka save/restore V3.2)
+saved the values in a reversed order.
+For values restored in pass0 this doesn't
+matter at all. If for some reason you managed
+to take advantage of the restore order in pass1,
+beware.
+
+On the IOC shell, there is no more 'fdblist' command.
+Use 'save_restoreShow 1'.
+
+If you get the new error message
+    Can't connect to status PV(s) for list '<your save file name>.sav'
+you didn't load the save/restore status PVs.
+
+There is an EDM screen 
+    save_restore.edl
+to display those status PVs.
+It requires macros
+    S  - System
+    SS - Subsystem
+    N  - Instance
+which will result in PV names like
+    $(S)_$(SS):IOC$(N):SR_heartbeat
