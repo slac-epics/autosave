@@ -115,10 +115,10 @@ int main(int argc,char **argv)
 	 * Copy to temporary file.
 	 * The .sav file is likely to be overwritten while we're using it.
 	 */
-	fp = fopen(filename,"r");
+	fp = fopen(filename,"rb");
 	if (fp == NULL) {printf("Can't open %s\n", filename); return(-1);}
 	tempname = tmpnam(NULL);
-	ftmp = fopen(tempname,"w");
+	ftmp = fopen(tempname,"wb");
 	if (ftmp == NULL) {printf("Can't open temp file.\n"); return(-1);}
 	while (!feof(fp) && (n=fread(s,1,BUF_SIZE,fp))) {
 		fwrite(s,1,n,ftmp);
@@ -126,10 +126,10 @@ int main(int argc,char **argv)
 	fclose(fp); fp = NULL;
 	fclose(ftmp); ftmp = NULL;
 
-	fp = fopen(tempname,"r");
+	fp = fopen(tempname,"rb");
 	if (fp == NULL) {printf("Can't open copy of %s.\n", filename); return(-1);}
 	if (write_restore_file) {
-		fr = fopen(restore_filename,"w");
+		fr = fopen(restore_filename,"wb");
 		if (fr == NULL) {
 			printf("Can't open restore_file '%s' for writing.\n", restore_filename);
 			write_restore_file = 0;

@@ -52,6 +52,7 @@
  *                
  */
 #define VERSION "4.7"
+#define SNS
 
 #include	<stdio.h>
 #include	<errno.h>
@@ -93,7 +94,7 @@ struct restoreList restoreFileList = {0, 0,
 };
 
 void myPrintErrno(char *s) {
-	errlogPrintf("%s(%d): [0x%x]=%s:%s", __FILE__, __LINE__, errno, s, strerror(errno));
+	errlogPrintf("%s(%d): [0x%x]=%s:%s\n", __FILE__, __LINE__, errno, s, strerror(errno));
 }
 
 STATIC float mySafeDoubleToFloat(double d)
@@ -144,9 +145,9 @@ STATIC int myFileCopy(const char *source, const char *dest)
 	if (save_restoreDebug >= 5)
 		errlogPrintf("dbrestore:myFileCopy: copying '%s' to '%s'\n", source, dest);
 
-	if (stat(source, &fileStat) == 0) size = (int)fileStat.st_size;
+	if (stat((char *)source, &fileStat) == 0) size = (int)fileStat.st_size;
 	errno = 0;
-	if ((source_fd = fopen(source,"r")) == NULL) {
+	if ((source_fd = fopen(source,"rb")) == NULL) {
 		errlogPrintf("save_restore:myFileCopy: Can't open file '%s'\n", source);
 		if (errno) myPrintErrno("myFileCopy");
 		if (++save_restoreIoErrors > save_restoreRemountThreshold) 
@@ -158,7 +159,7 @@ STATIC int myFileCopy(const char *source, const char *dest)
 	 * to S_nfsLib_NFSERR_NOENT even though it succeeds.  Probably this means
 	 * a failed attempt was retried. (System calls never set errno to zero.)
 	 */
-	if ((dest_fd = fopen(dest,"w")) == NULL) {
+	if ((dest_fd = fopen(dest,"wb")) == NULL) {
 		errlogPrintf("save_restore:myFileCopy: Can't open file '%s'\n", dest);
 		if (errno) myPrintErrno("myFileCopy");
 		fclose(source_fd);
@@ -168,13 +169,17 @@ STATIC int myFileCopy(const char *source, const char *dest)
 	while ((bp=fgets(buffer, BUF_SIZE, source_fd))) {
 		errno = 0;
 		chars_printed += fprintf(dest_fd, "%s", bp);
-		if (errno) {myPrintErrno("myFileCopy"); errno = 0;}
+#ifndef SNS
+		if (errno) {myPrintErrno("myFileCopy possibly misleading errno "); errno = 0;}
+#endif
 	}
 	errno = 0;
 	fclose(source_fd);
-	if (errno) {myPrintErrno("myFileCopy"); errno = 0;}
+	if (errno) {myPrintErrno("myFileCopy source close error?"); errno = 0;}
 	fclose(dest_fd);
-	if (errno) myPrintErrno("myFileCopy");
+#ifndef SNS
+	if (errno) myPrintErrno("myFileCopy dest close error?");
+#endif
 	if (size && (chars_printed != size)) {
 		errlogPrintf("myFileCopy: size=%d, chars_printed=%d\n",
 			size, chars_printed);
@@ -917,7 +922,7 @@ FILE *checkFile(const char *file)
 	char datetime[32];
 	int status;
 
-	if ((inp_fd = fopen(file, "r")) == NULL) {
+	if ((inp_fd = fopen(file, "rb")) == NULL) {
 		errlogPrintf("save_restore: Can't open file '%s'.\n", file);
 		return(0);
 	}

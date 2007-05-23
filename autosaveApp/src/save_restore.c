@@ -98,6 +98,8 @@
  */
 #define		SRVERSION "save/restore V4.9"
 
+#define		SNS
+
 #ifdef vxWorks
 #include	<vxWorks.h>
 #include	<stdioLib.h>
@@ -936,7 +938,7 @@ STATIC int write_it(char *filename, struct chlist *plist)
 
 	/* open the file */
 	errno = 0;
-	if ((out_fd = fopen(filename,"w")) == NULL) {
+	if ((out_fd = fopen(filename,"wb")) == NULL) {
 		errlogPrintf("save_restore:write_it - unable to open file '%s'\n", filename);
 		if (errno) myPrintErrno("write_it");
 		if (++save_restoreIoErrors > save_restoreRemountThreshold) {
@@ -952,7 +954,9 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	errno = 0;
 	n = fprintf(out_fd,"# %s\tAutomatically generated - DO NOT MODIFY - %s\n",
 			SRversion, datetime);
+#ifndef SNS
 	if (errno) myPrintErrno("write_it");
+#endif
 	if (n <= 0) {
 		errlogPrintf("save_restore:write_it: fprintf returned %d.\n", n);
 		goto trouble;
@@ -962,7 +966,9 @@ STATIC int write_it(char *filename, struct chlist *plist)
 		errno = 0;
 		n = fprintf(out_fd,"! %d channel(s) not connected - or not all gets were successful\n",
 				plist->not_connected);
+#ifndef SNS
 		if (errno) myPrintErrno("write_it");
+#endif
 		if (n <= 0) {
 			errlogPrintf("save_restore:write_it: fprintf returned %d.\n", n);
 			goto trouble;
@@ -977,7 +983,9 @@ STATIC int write_it(char *filename, struct chlist *plist)
 		} else {
 			n = fprintf(out_fd, "#%s ", pchannel->name);
 		}
+#ifndef SNS
 		if (errno) myPrintErrno("write_it");
+#endif
 		if (n <= 0) {
 			errlogPrintf("save_restore:write_it: fprintf returned %d.\n", n);
 			goto trouble;
@@ -991,7 +999,9 @@ STATIC int write_it(char *filename, struct chlist *plist)
 			} else {
 				n = fprintf(out_fd, "%-s\n", pchannel->value);
 			}
+#ifndef SNS
 			if (errno) myPrintErrno("write_it");
+#endif
 			if (n <= 0) {
 				errlogPrintf("save_restore:write_it: fprintf returned %d.\n", n);
 				goto trouble;
@@ -999,7 +1009,9 @@ STATIC int write_it(char *filename, struct chlist *plist)
 		} else {
 			/* treat as array */
 			n = SR_write_array_data(out_fd, pchannel->name, (void *)pchannel->pArray, pchannel->curr_elements);
+#ifndef SNS
 			if (errno) myPrintErrno("write_it");
+#endif
 			if (n <= 0) {
 				errlogPrintf("save_restore:write_it: fprintf returned %d.\n", n);
 				goto trouble;
@@ -1018,7 +1030,9 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	/* write file-is-ok marker */
 	errno = 0;
 	n = fprintf(out_fd, "<END>\n");
+#ifndef SNS
 	if (errno) myPrintErrno("write_it");
+#endif
 	if (n <= 0) {
 		errlogPrintf("save_restore:write_it: fprintf returned %d.\n", n);
 		goto trouble;
@@ -1027,7 +1041,9 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	/* flush everything to disk */
 	errno = 0;
 	n = fflush(out_fd);
+#ifndef SNS
 	if (errno) myPrintErrno("write_it");
+#endif
 	if (n != 0) errlogPrintf("save_restore:write_it: fflush returned %d\n", n);
 
 	errno = 0;
@@ -1041,12 +1057,16 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	if ((n != 0) && (errno == ENOTSUP)) { n = 0; errno = 0; }
 	if (n != 0) errlogPrintf("save_restore:write_it: fsync returned %d\n", n);
 #endif
+#ifndef SNS
 	if (errno) myPrintErrno("write_it");
+#endif
 
 	/* close the file */
 	errno = 0;
 	n = fclose(out_fd);
+#ifndef SNS
 	if (errno) myPrintErrno("write_it");
+#endif
 	if (n != 0) {
 		errlogPrintf("save_restore:write_it: fclose returned %d\n", n);
 		goto trouble;
@@ -1084,7 +1104,7 @@ STATIC int check_file(char *file)
 	char tmpstr[20];
 	int	 file_state = BS_NONE;
 
-	if ((fd = fopen(file, "r")) != NULL) {
+	if ((fd = fopen(file, "rb")) != NULL) {
 		if ((fseek(fd, -6, SEEK_END)) ||
 			(fgets(tmpstr, 6, fd) == 0) ||
 			(strncmp(tmpstr, "<END>", 5) != 0)) {
@@ -1903,7 +1923,7 @@ int do_manual_restore(char *filename, int file_type)
 	if (file_type == FROM_SAVE_FILE) {
 		inp_fd = fopen_and_check(restoreFile, &status);
 	} else {
-		inp_fd = fopen(restoreFile, "r");
+		inp_fd = fopen(restoreFile, "rb");
 	}
 	if (inp_fd == NULL) {
 		errlogPrintf("save_restore:do_manual_restore: Can't open save file.");
@@ -1984,12 +2004,12 @@ STATIC int readReqFile(const char *reqFile, struct chlist *plist, char *macrostr
 		for (p = reqFilePathList; p; p = p->pnext) {
 			strcpy(tmpfile, p->path);
 			strcat(tmpfile, reqFile);
-			inp_fd = fopen(tmpfile, "r");
+			inp_fd = fopen(tmpfile, "rb");
 			if (inp_fd) break;
 		}
 	} else {
 		/* try to find reqFile only in current working directory */
-		inp_fd = fopen(reqFile, "r");
+		inp_fd = fopen(reqFile, "rb");
 	}
 
 	if (!inp_fd) {
