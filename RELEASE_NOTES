@@ -1,2 +1,6 @@
 R1-0-0: Initial Release obtained from APS.
 
+autosave-R1-0-0:
+No changes except to beautify the configure/RELEASE file
+Also follow the tag naming convention.
+
