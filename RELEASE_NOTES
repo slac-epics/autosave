@@ -4,3 +4,7 @@ autosave-R1-0-0:
 No changes except to beautify the configure/RELEASE file
 Also follow the tag naming convention.
 
+autosave-R1-0-1:
+No functional change:
+Built against EPICS R3.14.8.2 and RTEMS 4.7.1
+
