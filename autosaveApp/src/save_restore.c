@@ -95,10 +95,16 @@
  *                fixing these problems.)
  * 03/24/06  tmm  v4.9 Use epicsThreadGetStackSize(epicsThreadStackBig)
  * 03/28/06  tmm  Replaced all Debug macros with straight code
+ *...
+ * 09/07/06  tmm  v5.0 Don't hold sr_mutex; instead, use it to protect the
+ *                variable listLock, which we can hold.  (vxWorks nversion-safe
+ *                mutex was keeping save_restore task at high priority for
+ *                much lomger than necessary.)
+ * 12/06/06  tmm  v5.1 Don't even print the value of errno if fprintf() sets it.
+ *                In tornado 2.2.1, fprintf() is setting errno every time, so
+ *                the info is useless for diagnostic purposes.
  */
-#define		SRVERSION "save/restore V4.9"
-
-#define		SNS
+#define		SRVERSION "save/restore V5.1"
 
 #ifdef vxWorks
 #include	<vxWorks.h>
@@ -218,6 +224,7 @@ volatile int save_restoreDebug = 0;
 epicsExportAddress(int, save_restoreDebug);
 
 STATIC struct chlist *lptr = NULL;				/* save-set listhead */
+STATIC int listLock = 0;						/* replaces long-term holding of sr_mutex */
 STATIC int listNumber = 0;						/* future: list number, to associate lists with status PV's */
 STATIC epicsMutexId	sr_mutex = NULL;			/* mut(ual) ex(clusion) for list of save sets */
 STATIC epicsEventId	sem_remove = NULL;			/* delete list semaphore */
@@ -304,6 +311,8 @@ STATIC int create_data_set(char *filename, int save_method, int period,
 		char *trigger_channel, int mon_period, char *macrostring);
 STATIC int do_manual_restore(char *filename, int file_type);
 STATIC int readReqFile(const char *file, struct chlist *plist, char *macrostring);
+STATIC int do_remove_data_set(char *filename);
+STATIC int request_manual_restore(char *filename, int file_type);
 
 /*** user-callable functions ***/
 int fdbrestore(char *filename);
@@ -323,7 +332,6 @@ int reload_periodic_set(char *filename, int period, char *macrostring);
 int reload_triggered_set(char *filename, char *trigger_channel, char *macrostring);
 int reload_monitor_set(char * filename, int period, char *macrostring);
 int reload_manual_set(char * filename, char *macrostring);
-int request_manual_restore(char *filename, int file_type);
 
 /* functions to set save_restore parameters */
 void save_restoreSet_Debug(int level) {save_restoreDebug = level;}
@@ -335,7 +343,42 @@ void save_restoreSet_status_prefix(char *prefix) {strncpy(status_prefix, prefix,
 
 /********************************* code *********************************/
 
+/*** access to list *lptr ***/
+
+STATIC int lockList() {
+	int caller_owns_lock = 0;
+	epicsMutexLock(sr_mutex);
+	if (!listLock) listLock = caller_owns_lock = 1;
+	epicsMutexUnlock(sr_mutex);
+	if (save_restoreDebug) printf("lockList: listLock=%d\n", listLock);
+	return(caller_owns_lock);
+}
+
+STATIC void unlockList() {
+	epicsMutexLock(sr_mutex);
+	listLock = 0;
+	epicsMutexUnlock(sr_mutex);
+	if (save_restoreDebug) printf("unlockList: listLock=%d\n", listLock);
+}
+
+STATIC int waitForListLock(double secondsToWait) {
+	double secondsWaited = 0., waitIncrement = 1;
+	while (lockList() == 0) {
+		if (secondsWaited >= secondsToWait) return(0);
+		epicsThreadSleep(waitIncrement);
+		secondsWaited += waitIncrement;
+	}
+	return(1);
+}
+
 /*** callbacks ***/
+
+/*
+ * PROBLEM: these callback routines don't protect themselves against the
+ * possibility that the list pointer they were given is out of date.  If
+ * the list no longer exists, they will write to memory that save_restore
+ * no longer owns.
+ */
 
 /* method PERIODIC - timer has elapsed */
 STATIC void periodic_save(CALLBACK *pcallback)
@@ -392,17 +435,23 @@ STATIC void on_change_save(struct event_handler_args event)
 int manual_save(char *request_file)
 {
 	struct chlist	*plist;
+	char	datetime[32];
 
-	epicsMutexLock(sr_mutex);
+	if (waitForListLock(5) == 0) {
+		printf("manual_save:failed to lock resource.  Try later.\n");
+		return(ERROR);
+	}
 	plist = lptr;
 	while ((plist != 0) && strcmp(plist->reqFile, request_file)) {
 		plist = plist->pnext;
 	}
 	if (plist != 0)
 		plist->save_state |= MANUAL;
-	else
-		errlogPrintf("save_restore:manual_save: saveset %s not found", request_file);
-	epicsMutexUnlock(sr_mutex);
+	else {
+		fGetDateStr(datetime);
+		errlogPrintf("save_restore:manual_save: saveset %s not found [%s]\n", request_file, datetime);
+	}
+	unlockList();
 	return(OK);
 }
 
@@ -418,7 +467,10 @@ void save_restoreSet_NFSHost(char *hostname, char *address) {
 
 STATIC int mountFileSystem()
 {
-	errlogPrintf("save_restore:mountFileSystem:entry\n");
+	char	datetime[32];
+
+	fGetDateStr(datetime);
+	errlogPrintf("save_restore:mountFileSystem:entry [%s]\n", datetime);
 	strncpy(SR_recentlyStr, "nfsMount failed", (STRING_LEN-1));
 	
 #ifdef vxWorks
@@ -445,9 +497,12 @@ STATIC int mountFileSystem()
 STATIC void dismountFileSystem()
 {
 #ifdef vxWorks
+	char	datetime[32];
 	if (save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0] && saveRestoreFilePath[0]) {
+		fGetDateStr(datetime);
 		nfsUnmount(saveRestoreFilePath);
-		errlogPrintf("save_restore:dismountFileSystem:dismounted '%s'\n", saveRestoreFilePath);
+		errlogPrintf("save_restore:dismountFileSystem:dismounted '%s' [%s]\n",
+			saveRestoreFilePath, datetime);
 		save_restoreNFSOK = 0;
 		strncpy(SR_recentlyStr, "nfsUnmount", (STRING_LEN-1));
 	}
@@ -464,7 +519,7 @@ STATIC void dismountFileSystem()
  */
 STATIC int save_restore(void)
 {
-	struct chlist *plist;
+	struct chlist *plist = NULL;
 	char *cp, nameString[FN_LEN];
 	int i, do_seq_check, just_remounted, n;
 	long status;
@@ -558,7 +613,9 @@ STATIC int save_restore(void)
 		}
 #endif
 		/* look at each list */
-		epicsMutexLock(sr_mutex);
+		while (waitForListLock(5) == 0) {
+			if (save_restoreDebug) errlogPrintf("save_restore: '%s' waiting for listLock()\n", plist->reqFile);
+		}
 		plist = lptr;
 		while (plist != 0) {
 			if (save_restoreDebug >= 30)
@@ -628,7 +685,7 @@ STATIC int save_restore(void)
 		}
 
 		/* release the list */
-		epicsMutexUnlock(sr_mutex);
+		unlockList();
 
 		/* report status */
 		SR_heartbeat = (SR_heartbeat+1) % 2;
@@ -644,6 +701,7 @@ STATIC int save_restore(void)
 		}
 
 		/*** set up list-specific status PV's for any new lists ***/
+/* BEGIN: This should be done with list locked */
 		for (plist = lptr; plist; plist = plist->pnext) {
 			/* If this is the first time for a list, connect to its status PV's */
 			if (plist->status_PV[0] == '\0') {
@@ -690,10 +748,11 @@ STATIC int save_restore(void)
 					ca_put(DBR_STRING, plist->time_chid, &plist->timeStr);
 			}
 		}
+/* END: This should be done with list locked */
 
 		/*** service user commands ***/
 		if (remove_dset) {
-			remove_status = remove_data_set(remove_filename);
+			remove_status = do_remove_data_set(remove_filename);
 			remove_filename[0] = 0;
 			remove_dset = 0;
 			epicsEventSignal(sem_remove);
@@ -776,6 +835,8 @@ STATIC int connect_list(struct chlist *plist)
 
 /*
  * enable new save methods
+ *
+ * NOTE: Assumes sr_mutex is locked
  */
 STATIC int enable_list(struct chlist *plist)
 {
@@ -783,8 +844,6 @@ STATIC int enable_list(struct chlist *plist)
 	chid 			chid;			/* channel access id */
 
 	if (save_restoreDebug >= 4) errlogPrintf("save_restore:enable_list: entry\n");
-
-	epicsMutexLock(sr_mutex);
 
 	/* enable a periodic set */
 	if ((plist->save_method & PERIODIC) && !(plist->enabled_method & PERIODIC)) {
@@ -814,7 +873,7 @@ STATIC int enable_list(struct chlist *plist)
 		for (pchannel = plist->pchan_list; pchannel != 0; pchannel = pchannel->pnext) {
 			if (save_restoreDebug >= 10) {
 				errlogPrintf("save_restore:enable_list: calling ca_add_event for '%s'\n", pchannel->name);
-				errlogPrintf("save_restore:enable_list: arg = %p\n", plist);
+				errlogPrintf("save_restore:enable_list: arg = %p\n", (void *)plist);
 			}
 			/*
 			 * Work around obscure problem affecting USHORTS by making DBR type different
@@ -842,13 +901,14 @@ STATIC int enable_list(struct chlist *plist)
 	}
 
 	sprintf(SR_recentlyStr, "list '%s' enabled", plist->save_file);
-	epicsMutexUnlock(sr_mutex);
 	return(OK);
 }
 
 
 /*
  * fetch values for all channels in the save set
+ *
+ * NOTE: Assumes sr_mutex is locked
  */
 #define INIT_STRING "!@#$%^&*()"
 STATIC int get_channel_values(struct chlist *plist)
@@ -858,8 +918,6 @@ STATIC int get_channel_values(struct chlist *plist)
 	int				not_connected = 0;
 	unsigned short	num_channels = 0;
 	short			field_type;
-
-	epicsMutexLock(sr_mutex);
 
 	/* attempt to fetch all channels that are connected */
 	for (pchannel = plist->pchan_list; pchannel != 0; pchannel = pchannel->pnext) {
@@ -921,11 +979,15 @@ STATIC int get_channel_values(struct chlist *plist)
 		}
 	}
 
-	epicsMutexUnlock(sr_mutex);
 	return(not_connected);
 }
 
-/*** Actually write the file ***/
+/*
+ * Actually write the file
+ *
+ * NOTE: Assumes sr_mutex is locked
+ *
+ */
  
 STATIC int write_it(char *filename, struct chlist *plist)
 {
@@ -934,31 +996,28 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	int 			n, i;
 	char			datetime[32];
 	
-	epicsMutexLock(sr_mutex);
+	fGetDateStr(datetime);
 
 	/* open the file */
 	errno = 0;
-	if ((out_fd = fopen(filename,"wb")) == NULL) {
-		errlogPrintf("save_restore:write_it - unable to open file '%s'\n", filename);
-		if (errno) myPrintErrno("write_it");
+	if ((out_fd = fopen(filename,"w")) == NULL) {
+		errlogPrintf("save_restore:write_it - unable to open file '%s' [%s]\n",
+			filename, datetime);
+		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
 		if (++save_restoreIoErrors > save_restoreRemountThreshold) {
 			save_restoreNFSOK = 0;
 			strncpy(SR_recentlyStr, "Too many I/O errors",(STRING_LEN-1));
 		}
-		epicsMutexUnlock(sr_mutex);
 		return(ERROR);
 	}
 
 	/* write header info */
-	fGetDateStr(datetime);
 	errno = 0;
 	n = fprintf(out_fd,"# %s\tAutomatically generated - DO NOT MODIFY - %s\n",
 			SRversion, datetime);
-#ifndef SNS
-	if (errno) myPrintErrno("write_it");
-#endif
+	if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
 	if (n <= 0) {
-		errlogPrintf("save_restore:write_it: fprintf returned %d.\n", n);
+		errlogPrintf("save_restore:write_it: fprintf returned %d. [%s]\n", n, datetime);
 		goto trouble;
 	}
 
@@ -966,11 +1025,9 @@ STATIC int write_it(char *filename, struct chlist *plist)
 		errno = 0;
 		n = fprintf(out_fd,"! %d channel(s) not connected - or not all gets were successful\n",
 				plist->not_connected);
-#ifndef SNS
-		if (errno) myPrintErrno("write_it");
-#endif
+		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
 		if (n <= 0) {
-			errlogPrintf("save_restore:write_it: fprintf returned %d.\n", n);
+			errlogPrintf("save_restore:write_it: fprintf returned %d. [%s]\n", n, datetime);
 			goto trouble;
 		}
 	}
@@ -983,11 +1040,9 @@ STATIC int write_it(char *filename, struct chlist *plist)
 		} else {
 			n = fprintf(out_fd, "#%s ", pchannel->name);
 		}
-#ifndef SNS
-		if (errno) myPrintErrno("write_it");
-#endif
+		/* if (errno) myPrintErrno("write_it", __FILE__, __LINE__); */
 		if (n <= 0) {
-			errlogPrintf("save_restore:write_it: fprintf returned %d.\n", n);
+			errlogPrintf("save_restore:write_it: fprintf returned %d. [%s]\n", n, datetime);
 			goto trouble;
 		}
 
@@ -999,21 +1054,17 @@ STATIC int write_it(char *filename, struct chlist *plist)
 			} else {
 				n = fprintf(out_fd, "%-s\n", pchannel->value);
 			}
-#ifndef SNS
-			if (errno) myPrintErrno("write_it");
-#endif
+			/* if (errno) myPrintErrno("write_it", __FILE__, __LINE__); */
 			if (n <= 0) {
-				errlogPrintf("save_restore:write_it: fprintf returned %d.\n", n);
+				errlogPrintf("save_restore:write_it: fprintf returned %d. [%s]\n", n, datetime);
 				goto trouble;
 			}
 		} else {
 			/* treat as array */
 			n = SR_write_array_data(out_fd, pchannel->name, (void *)pchannel->pArray, pchannel->curr_elements);
-#ifndef SNS
-			if (errno) myPrintErrno("write_it");
-#endif
+			if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
 			if (n <= 0) {
-				errlogPrintf("save_restore:write_it: fprintf returned %d.\n", n);
+				errlogPrintf("save_restore:write_it: fprintf returned %d [%s].\n", n, datetime);
 				goto trouble;
 			}
 		}
@@ -1030,48 +1081,48 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	/* write file-is-ok marker */
 	errno = 0;
 	n = fprintf(out_fd, "<END>\n");
-#ifndef SNS
-	if (errno) myPrintErrno("write_it");
-#endif
+	if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
 	if (n <= 0) {
-		errlogPrintf("save_restore:write_it: fprintf returned %d.\n", n);
+		errlogPrintf("save_restore:write_it: fprintf returned %d. [%s]\n", n, datetime);
 		goto trouble;
 	}
 
 	/* flush everything to disk */
 	errno = 0;
 	n = fflush(out_fd);
-#ifndef SNS
-	if (errno) myPrintErrno("write_it");
-#endif
-	if (n != 0) errlogPrintf("save_restore:write_it: fflush returned %d\n", n);
+	if (n != 0){
+		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
+		errlogPrintf("save_restore:write_it: fflush returned %d [%s]\n", n, datetime);
+	}
+
 
 	errno = 0;
 #if defined(vxWorks)
 	n = ioctl(fileno(out_fd),FIOSYNC,0);	/* NFS flush to disk */
-	if (n == ERROR) errlogPrintf("save_restore:write_it: ioctl(,FIOSYNC,) returned %d\n", n);
+	if (n == ERROR) {
+		errlogPrintf("save_restore:write_it: ioctl(,FIOSYNC,) returned %d [%s]\n",
+			n, datetime);
+		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
+	}
 #elif defined(_WIN32)
         /* WIN32 has no real equivalent to fsync? */
 #else
 	n = fsync(fileno(out_fd));
 	if ((n != 0) && (errno == ENOTSUP)) { n = 0; errno = 0; }
-	if (n != 0) errlogPrintf("save_restore:write_it: fsync returned %d\n", n);
-#endif
-#ifndef SNS
-	if (errno) myPrintErrno("write_it");
+	if (n != 0) {
+		errlogPrintf("save_restore:write_it: fsync returned %d [%s]\n", n, datetime);
+		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
+	}
 #endif
 
 	/* close the file */
 	errno = 0;
 	n = fclose(out_fd);
-#ifndef SNS
-	if (errno) myPrintErrno("write_it");
-#endif
 	if (n != 0) {
-		errlogPrintf("save_restore:write_it: fclose returned %d\n", n);
+		errlogPrintf("save_restore:write_it: fclose returned %d [%s]\n", n, datetime);
+		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
 		goto trouble;
 	}
-	epicsMutexUnlock(sr_mutex);
 	return(OK);
 
 trouble:
@@ -1085,9 +1136,10 @@ trouble:
 		}
 	}
 	if (i >= 60) {
-		errlogPrintf("save_restore:write_it: Can't close '%s'; giving up.\n", plist->save_file);
+		fGetDateStr(datetime);
+		errlogPrintf("save_restore:write_it: Can't close '%s'; giving up. [%s]\n",
+			plist->save_file, datetime);
 	}
-	epicsMutexUnlock(sr_mutex);
 	return(ERROR);
 }
 
@@ -1104,7 +1156,7 @@ STATIC int check_file(char *file)
 	char tmpstr[20];
 	int	 file_state = BS_NONE;
 
-	if ((fd = fopen(file, "rb")) != NULL) {
+	if ((fd = fopen(file, "r")) != NULL) {
 		if ((fseek(fd, -6, SEEK_END)) ||
 			(fgets(tmpstr, 6, fd) == 0) ||
 			(strncmp(tmpstr, "<END>", 5) != 0)) {
@@ -1122,6 +1174,8 @@ STATIC int check_file(char *file)
  *
  * Write a list of channel names and values to an ASCII file.
  *
+ * NOTE: Assumes sr_mutex is locked
+ *
  */
 STATIC int write_save_file(struct chlist *plist)
 {
@@ -1130,7 +1184,7 @@ STATIC int write_save_file(struct chlist *plist)
 	int		backup_state = BS_OK;
 	char	datetime[32];
 
-	epicsMutexLock(sr_mutex);
+	fGetDateStr(datetime);
 	plist->status = SR_STATUS_OK;
 	strcpy(plist->statusStr, "Ok");
 
@@ -1143,30 +1197,28 @@ STATIC int write_save_file(struct chlist *plist)
 	/* Ensure that backup is ok before we overwrite .sav file. */
 	backup_state = check_file(backup_file);
 	if (backup_state != BS_OK) {
-		errlogPrintf("save_restore:write_save_file: Backup file (%s) bad or not found.  Writing a new one.\n", 
-			backup_file);
+		errlogPrintf("save_restore:write_save_file: Backup file (%s) bad or not found.  Writing a new one. [%s]\n", 
+			backup_file, datetime);
 		if (backup_state == BS_BAD) {
 			/* make a backup copy of the corrupted file */
 			strcpy(tmpstr, backup_file);
 			strcat(tmpstr, "_SBAD_");
 			if (save_restoreDatedBackupFiles) {
-				fGetDateStr(datetime);
 				strcat(tmpstr, datetime);
 				sprintf(SR_recentlyStr, "Bad file: '%sB'", plist->save_file);
 			}
 			(void)myFileCopy(backup_file, tmpstr);
 		}
 		if (write_it(backup_file, plist) == ERROR) {
-			errlogPrintf("*** *** *** *** *** *** *** *** *** *** *** *** *** *** ***\n");
-			errlogPrintf("save_restore:write_save_file: Can't write new backup file. \n");
-			errlogPrintf("*** *** *** *** *** *** *** *** *** *** *** *** *** *** ***\n");
+			errlogPrintf("*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***\n");
+			errlogPrintf("save_restore:write_save_file: Can't write new backup file. [%s]\n", datetime);
+			errlogPrintf("*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***\n");
 			plist->status = SR_STATUS_FAIL;
 			strcpy(plist->statusStr, "Can't write .savB file");
 			if (plist->statusStr_chid && (ca_state(plist->statusStr_chid) == cs_conn)) {
 				ca_put(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
 				ca_flush_io();
 			}
-			epicsMutexUnlock(sr_mutex);
 			return(ERROR);
 		}
 		plist->status = SR_STATUS_WARN;
@@ -1181,9 +1233,9 @@ STATIC int write_save_file(struct chlist *plist)
 	/*** Write the save file ***/
 	if (save_restoreDebug >= 1) errlogPrintf("write_save_file: saving to %s\n", save_file);
 	if (write_it(save_file, plist) == ERROR) {
-		errlogPrintf("*** *** *** *** *** *** *** *** *** *** *** *** ***\n");
-		errlogPrintf("save_restore:write_save_file: Can't write save file.\n");
-		errlogPrintf("*** *** *** *** *** *** *** *** *** *** *** *** ***\n");
+		errlogPrintf("*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***\n");
+		errlogPrintf("save_restore:write_save_file: Can't write save file. [%s]\n", datetime);
+		errlogPrintf("*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***\n");
 		plist->status = SR_STATUS_FAIL;
 		strcpy(plist->statusStr, "Can't write .sav file");
 		if (plist->statusStr_chid && (ca_state(plist->statusStr_chid) == cs_conn)) {
@@ -1191,7 +1243,6 @@ STATIC int write_save_file(struct chlist *plist)
 			ca_flush_io();
 		}
 		sprintf(SR_recentlyStr, "Can't write '%s'", plist->save_file);
-		epicsMutexUnlock(sr_mutex);
 		return(ERROR);
 	}
 
@@ -1203,8 +1254,8 @@ STATIC int write_save_file(struct chlist *plist)
 	if (backup_state != BS_NEW) {
 		/* make a backup copy */
 		if (myFileCopy(save_file, backup_file) != OK) {
-			errlogPrintf("save_restore:write_save_file - Couldn't make backup '%s'\n",
-				backup_file);
+			errlogPrintf("save_restore:write_save_file - Couldn't make backup '%s' [%s]\n",
+				backup_file, datetime);
 			plist->status = SR_STATUS_WARN;
 			strcpy(plist->statusStr, "Can't write .savB file");
 			if (plist->statusStr_chid && (ca_state(plist->statusStr_chid) == cs_conn)) {
@@ -1212,7 +1263,6 @@ STATIC int write_save_file(struct chlist *plist)
 				ca_flush_io();
 			}
 			sprintf(SR_recentlyStr, "Can't write '%sB'", plist->save_file);
-			epicsMutexUnlock(sr_mutex);
 			return(ERROR);
 		}
 	}
@@ -1226,7 +1276,6 @@ STATIC int write_save_file(struct chlist *plist)
 		}
 	}
 	sprintf(SR_recentlyStr, "Wrote '%s'", plist->save_file);
-	epicsMutexUnlock(sr_mutex);
 	return(OK);
 }
 
@@ -1236,14 +1285,16 @@ STATIC int write_save_file(struct chlist *plist)
  * [0..save_restoreNumSeqFiles].  If .sav file can't be opened,
  * write .savX file explicitly, as we would write .sav file.
  *
+ * NOTE: Assumes sr_mutex is locked *
  */
 STATIC void do_seq(struct chlist *plist)
 {
 	char	*p, save_file[PATH_SIZE+3] = "", backup_file[PATH_SIZE+3] = "";
 	int		i;
 	struct stat fileStat;
+	char	datetime[32];
 
-	epicsMutexLock(sr_mutex);
+	fGetDateStr(datetime);
 
 	/* Make full file names */
 	strncpy(save_file, saveRestoreFilePath, sizeof(save_file) - 1);
@@ -1272,26 +1323,25 @@ STATIC void do_seq(struct chlist *plist)
 	}
 
 	if (check_file(save_file) == BS_NONE) {
-		errlogPrintf("save_restore:do_seq - '%s' not found.  Writing a new one.\n",
-			save_file);
+		errlogPrintf("save_restore:do_seq - '%s' not found.  Writing a new one. [%s]\n",
+			save_file, datetime);
 		(void) write_save_file(plist);
 	}
 	sprintf(p, "%1d", plist->backup_sequence_num);
 	if (myFileCopy(save_file, backup_file) != OK) {
-		errlogPrintf("save_restore:do_seq - Can't copy save file to '%s'\n",
-			backup_file);
+		errlogPrintf("save_restore:do_seq - Can't copy save file to '%s' [%s]\n",
+			backup_file, datetime);
 		if (write_it(backup_file, plist) == ERROR) {
-			errlogPrintf("save_restore:do_seq - Can't write seq. file from PV list.\n");
+			errlogPrintf("save_restore:do_seq - Can't write seq. file from PV list. [%s]\n", datetime);
 			if (plist->status >= SR_STATUS_WARN) {
 				plist->status = SR_STATUS_SEQ_WARN;
 				strcpy(plist->statusStr, "Can't write sequence file");
 			}
 			sprintf(SR_recentlyStr, "Can't write '%s%1d'",
 				plist->save_file, plist->backup_sequence_num);
-			epicsMutexUnlock(sr_mutex);
 			return;
 		} else {
-			errlogPrintf("save_restore:do_seq: Wrote seq. file from PV list.\n");
+			errlogPrintf("save_restore:do_seq: Wrote seq. file from PV list. [%s]\n", datetime);
 			sprintf(SR_recentlyStr, "Wrote '%s%1d'",
 				plist->save_file, plist->backup_sequence_num);
 		}
@@ -1303,29 +1353,29 @@ STATIC void do_seq(struct chlist *plist)
 	epicsTimeGetCurrent(&plist->backup_time);
 	if (++(plist->backup_sequence_num) >=  save_restoreNumSeqFiles)
 		plist->backup_sequence_num = 0;
-
-	epicsMutexUnlock(sr_mutex);
 }
 
-
+/* Called only by the user */
 int set_savefile_name(char *filename, char *save_filename)
 {
 	struct chlist	*plist;
 
-	/* is save set defined - add new save mode if necessary */
-	epicsMutexLock(sr_mutex);
+	if (waitForListLock(5) == 0) {
+		printf("set_savefile_name:failed to lock resource.  Try later.\n");
+		return(ERROR);
+	}
 	plist = lptr;
 	while (plist != 0) {
 		if (!strcmp(plist->reqFile,filename)) {
 			strcpy(plist->save_file,save_filename);
-			epicsMutexUnlock(sr_mutex);
+			unlockList();
 			sprintf(SR_recentlyStr, "New save file: '%s'", save_filename);
 			return(OK);
 		}
 		plist = plist->pnext;
 	}
 	errlogPrintf("save_restore:set_savefile_name: No save set enabled for %s\n",filename);
-	epicsMutexUnlock(sr_mutex);
+	unlockList();
 	return(ERROR);
 }
 
@@ -1406,13 +1456,15 @@ STATIC int create_data_set(
 	}
 
 	/* is save set defined - add new save mode if necessary */
-	epicsMutexLock(sr_mutex);
+	while (waitForListLock(5) == 0) {
+		if (save_restoreDebug) errlogPrintf("create_data_set: '%s' waiting for listLock()\n", filename);
+	}
 	plist = lptr;
 	while (plist != 0) {
 		if (!strcmp(plist->reqFile,filename)) {
 			if (plist->save_method & save_method) {
 				errlogPrintf("save_restore:create_data_set: '%s' already in %x mode",filename,save_method);
-				epicsMutexUnlock(sr_mutex);
+				unlockList();
 				return(ERROR);
 			} else {
 				/* Add a new method to an existing list */
@@ -1421,7 +1473,7 @@ STATIC int create_data_set(
 						strcpy(plist->trigger_channel,trigger_channel);
 					} else {
 						errlogPrintf("save_restore:create_data_set: no trigger channel");
-						epicsMutexUnlock(sr_mutex);
+						unlockList();
 						return(ERROR);
 					}
 				} else if (save_method == PERIODIC) {
@@ -1437,13 +1489,13 @@ STATIC int create_data_set(
 				 */
 				/* enable_list(plist); */
 
-				epicsMutexUnlock(sr_mutex);
+				unlockList();
 				return(OK);
 			}
 		}
 		plist = plist->pnext;
 	}
-	epicsMutexUnlock(sr_mutex);
+	unlockList();
 
 	/* create a new channel list */
 	if ((plist = (struct chlist *)calloc(1,sizeof (struct chlist))) == (struct chlist *)0) {
@@ -1496,10 +1548,12 @@ STATIC int create_data_set(
 	plist->listNumber = listNumber++;
 
 	/* link it to the save set list */
-	epicsMutexLock(sr_mutex);
+	while (waitForListLock(5) == 0) {
+		if (save_restoreDebug) errlogPrintf("create_data_set: '%s' waiting for listLock()\n", filename);
+	}
 	plist->pnext = lptr;
 	lptr = plist;
-	epicsMutexUnlock(sr_mutex);
+	unlockList();
 
 	return(OK);
 }
@@ -1517,10 +1571,13 @@ void save_restoreShow(int verbose)
 	struct channel 	*pchannel;
 	struct pathListElement *p = reqFilePathList;
 	char tmpstr[50];
+	char	datetime[32];
 	int NFS_managed = save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0] && 
 		saveRestoreFilePath[0];
 
+	fGetDateStr(datetime);
 	printf("BEGIN save_restoreShow\n");
+	printf("  Current date-time (yymmdd-hhmmss): [%s] \n", datetime);
 	printf("  Status: '%s' - '%s'\n", SR_STATUS_STR[SR_status], SR_statusStr);
 	printf("  Debug level: %d\n", save_restoreDebug);
 	printf("  Save/restore incomplete save sets? %s\n", save_restoreIncompleteSetsOk?"YES":"NO");
@@ -1537,7 +1594,7 @@ void save_restoreShow(int verbose)
 		p = p->pnext;
 	}
 	printf("  save file path:\n    '%s'\n", saveRestoreFilePath);
-	if (sr_mutex && (epicsMutexLock(sr_mutex) == epicsMutexLockOK)) {
+	if (sr_mutex && (waitForListLock(5) == 1)) {
 		for (plist = lptr; plist != 0; plist = plist->pnext) {
 			printf("  %s: \n",plist->reqFile);
 			printf("    Status PV: %s\n", plist->status_PV);
@@ -1575,7 +1632,7 @@ void save_restoreShow(int verbose)
 				}
 			}
 		}
-		epicsMutexUnlock(sr_mutex);
+		unlockList();
 	} else {
 		if (!sr_mutex)
 			printf("  The save_restore task apparently is not running.\n");
@@ -1690,9 +1747,25 @@ int set_saveTask_priority(int priority)
 	return(OK);
 }
 
+STATIC int remove_data_set(char *filename)
+{
+	epicsEventWaitStatus s;
+
+	strncpy(remove_filename, filename, sizeof(remove_filename) -1);
+	remove_dset = 1;
+	s = epicsEventWaitWithTimeout(sem_remove, (double)TIME2WAIT);
+	if (s) errlogPrintf("save_restore:remove_data_set: epicsEventWaitWithTimeout -> %d\n", s);
+	if (s || remove_status) {
+		errlogPrintf("save_restore:remove_data_set: error removing %s\n", filename);
+		return(ERROR);
+	} else {
+		sprintf(SR_recentlyStr, "Removed data set '%s'", filename);
+		return(0);
+	}
+}
 
 /*** remove a data set from the list ***/
-int remove_data_set(char *filename)
+STATIC int do_remove_data_set(char *filename)
 {
 	int found = 0;
 	int numchannels = 0;
@@ -1700,6 +1773,10 @@ int remove_data_set(char *filename)
 	struct channel *pchannel, *pchannelt;
 
 	/* find the data set */
+	if (waitForListLock(5) == 0) {
+		printf("do_remove_data_set:failed to lock resource.  Try later.\n");
+		return(ERROR);
+	}
 	plist = lptr;
 	previous = 0;
 	while(plist) {
@@ -1710,20 +1787,23 @@ int remove_data_set(char *filename)
 		previous = plist;
 		plist = plist->pnext;
 	}
+	unlockList();
 
 	if (found) {
-		epicsMutexLock(sr_mutex);
-
+		if (waitForListLock(5) == 0) {
+			printf("do_remove_data_set:failed to lock resource.  Try later.\n");
+			return(ERROR);
+		}
 		pchannel = plist->pchan_list;
 		while (pchannel) {
 			if (ca_clear_channel(pchannel->chid) != ECA_NORMAL) {
-				errlogPrintf("save_restore:remove_data_set: couldn't remove ca connection for %s\n", pchannel->name);
+				errlogPrintf("save_restore:do_remove_data_set: couldn't remove ca connection for %s\n", pchannel->name);
 			}
 			pchannel = pchannel->pnext;
 			numchannels++;
 		}
 		if (ca_pend_io(MIN(10.0, numchannels*0.1)) != ECA_NORMAL) {
-		       errlogPrintf("save_restore:remove_data_set: ca_pend_io() timed out\n");
+		       errlogPrintf("save_restore:do_remove_data_set: ca_pend_io() timed out\n");
 		}
 		pchannel = plist->pchan_list;
 		while (pchannel) {
@@ -1739,10 +1819,10 @@ int remove_data_set(char *filename)
 		}
 		free(plist);
 
-		epicsMutexUnlock(sr_mutex);
+		unlockList();
 
 	} else {
-		errlogPrintf("save_restore:remove_data_set: Couldn't find '%s'\n", filename);
+		errlogPrintf("save_restore:do_remove_data_set: Couldn't find '%s'\n", filename);
 		sprintf(SR_recentlyStr, "Can't remove data set '%s'", filename);
 		return(ERROR);
 	}
@@ -1829,7 +1909,7 @@ int fdbrestoreX(char *filename)
 	return(request_manual_restore(filename, FROM_ASCII_FILE));
 }
 
-int request_manual_restore(char *filename, int file_type)
+STATIC int request_manual_restore(char *filename, int file_type)
 {
 	epicsEventWaitStatus s;
 
@@ -1856,7 +1936,7 @@ int request_manual_restore(char *filename, int file_type)
  * and update database vaules.
  *
  */
-int do_manual_restore(char *filename, int file_type)
+STATIC int do_manual_restore(char *filename, int file_type)
 {	
 	struct channel	*pchannel;
 	struct chlist	*plist;
@@ -1873,11 +1953,14 @@ int do_manual_restore(char *filename, int file_type)
 
 	if (file_type == FROM_SAVE_FILE) {
 		/* if this is the current file name for a save set - restore from there */
-		epicsMutexLock(sr_mutex);
+		if (waitForListLock(5) == 0) {
+			printf("do_manual_restore:failed to lock resource.  Try later.\n");
+			return(ERROR);
+		}
 		for (plist=lptr, found=0; plist && !found; ) {
 			if (strcmp(plist->last_save_file,filename) == 0) {
 				found = 1;
-			}else{
+			} else {
 				plist = plist->pnext;
 			}
 		}
@@ -1888,7 +1971,7 @@ int do_manual_restore(char *filename, int file_type)
 					plist->not_connected);
 				if (!save_restoreIncompleteSetsOk) {
 					errlogPrintf("save_restore:do_manual_restore: aborting restore\n");
-					epicsMutexUnlock(sr_mutex);
+					unlockList();
 					strncpy(SR_recentlyStr, "Manual restore failed",(STRING_LEN-1));
 					return(ERROR);
 				}
@@ -1905,7 +1988,7 @@ int do_manual_restore(char *filename, int file_type)
 			if (ca_pend_io(1.0) != ECA_NORMAL) {
 				errlogPrintf("save_restore:do_manual_restore: not all channels restored\n");
 			}
-			epicsMutexUnlock(sr_mutex);
+			unlockList();
 			if (num_errs == 0) {
 				strncpy(SR_recentlyStr, "Manual restore succeeded",(STRING_LEN-1));
 			} else {
@@ -1913,7 +1996,7 @@ int do_manual_restore(char *filename, int file_type)
 			}
 			return(OK);
 		}
-		epicsMutexUnlock(sr_mutex);
+		unlockList();
 	}
 
 	/* open file */
@@ -1923,7 +2006,7 @@ int do_manual_restore(char *filename, int file_type)
 	if (file_type == FROM_SAVE_FILE) {
 		inp_fd = fopen_and_check(restoreFile, &status);
 	} else {
-		inp_fd = fopen(restoreFile, "rb");
+		inp_fd = fopen(restoreFile, "r");
 	}
 	if (inp_fd == NULL) {
 		errlogPrintf("save_restore:do_manual_restore: Can't open save file.");
@@ -1995,7 +2078,7 @@ STATIC int readReqFile(const char *reqFile, struct chlist *plist, char *macrostr
 
 	if (save_restoreDebug >= 1) {
 		errlogPrintf("save_restore:readReqFile: entry: reqFile='%s', plist=%p, macrostring='%s'\n",
-			reqFile, plist, macrostring?macrostring:"NULL");
+			reqFile, (void *)plist, macrostring?macrostring:"NULL");
 	}
 
 	/* open request file */
@@ -2004,12 +2087,12 @@ STATIC int readReqFile(const char *reqFile, struct chlist *plist, char *macrostr
 		for (p = reqFilePathList; p; p = p->pnext) {
 			strcpy(tmpfile, p->path);
 			strcat(tmpfile, reqFile);
-			inp_fd = fopen(tmpfile, "rb");
+			inp_fd = fopen(tmpfile, "r");
 			if (inp_fd) break;
 		}
 	} else {
 		/* try to find reqFile only in current working directory */
-		inp_fd = fopen(reqFile, "rb");
+		inp_fd = fopen(reqFile, "r");
 	}
 
 	if (!inp_fd) {

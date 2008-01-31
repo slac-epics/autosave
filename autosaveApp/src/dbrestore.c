@@ -49,10 +49,13 @@
  *                files that lack header lines, or lack a version number.
  *                Check return codes from some calls to fseek().
  * 03/28/06  tmm  Replaced all Debug macros with straight code
+ * 10/05/06  tmm  v4.8 Use binary mode for fopen() calls in myFileCopy, to avoid
+ *                file-size differences caused by different line terminators
+ *                on different operating systems.  (Thanks to Kay Kasemir.)
+ * 01/02/07  tmm  v4.9 Convert empty SPC_CALC fields to "0" before restoring.
  *                
  */
-#define VERSION "4.7"
-#define SNS
+#define VERSION "4.9"
 
 #include	<stdio.h>
 #include	<errno.h>
@@ -76,6 +79,7 @@
 #include 	"fGetDateStr.h"
 #include	"save_restore.h"
 #include	<epicsExport.h>
+#include	<special.h>
 
 #ifndef vxWorks
 #define OK 0
@@ -93,8 +97,8 @@ struct restoreList restoreFileList = {0, 0,
 			{NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL}
 };
 
-void myPrintErrno(char *s) {
-	errlogPrintf("%s(%d): [0x%x]=%s:%s\n", __FILE__, __LINE__, errno, s, strerror(errno));
+void myPrintErrno(char *s, char *file, int line) {
+	errlogPrintf("%s(%d): [0x%x]=%s:%s\n", file, line, errno, s, strerror(errno));
 }
 
 STATIC float mySafeDoubleToFloat(double d)
@@ -145,11 +149,11 @@ STATIC int myFileCopy(const char *source, const char *dest)
 	if (save_restoreDebug >= 5)
 		errlogPrintf("dbrestore:myFileCopy: copying '%s' to '%s'\n", source, dest);
 
-	if (stat((char *)source, &fileStat) == 0) size = (int)fileStat.st_size;
+	if (stat(source, &fileStat) == 0) size = (int)fileStat.st_size;
 	errno = 0;
 	if ((source_fd = fopen(source,"rb")) == NULL) {
 		errlogPrintf("save_restore:myFileCopy: Can't open file '%s'\n", source);
-		if (errno) myPrintErrno("myFileCopy");
+		if (errno) myPrintErrno("myFileCopy", __FILE__, __LINE__);
 		if (++save_restoreIoErrors > save_restoreRemountThreshold) 
 			save_restoreNFSOK = 0;
 		return(ERROR);
@@ -161,7 +165,7 @@ STATIC int myFileCopy(const char *source, const char *dest)
 	 */
 	if ((dest_fd = fopen(dest,"wb")) == NULL) {
 		errlogPrintf("save_restore:myFileCopy: Can't open file '%s'\n", dest);
-		if (errno) myPrintErrno("myFileCopy");
+		if (errno) myPrintErrno("myFileCopy", __FILE__, __LINE__);
 		fclose(source_fd);
 		return(ERROR);
 	}
@@ -169,17 +173,19 @@ STATIC int myFileCopy(const char *source, const char *dest)
 	while ((bp=fgets(buffer, BUF_SIZE, source_fd))) {
 		errno = 0;
 		chars_printed += fprintf(dest_fd, "%s", bp);
-#ifndef SNS
-		if (errno) {myPrintErrno("myFileCopy possibly misleading errno "); errno = 0;}
-#endif
+		if (errno) {myPrintErrno("myFileCopy", __FILE__, __LINE__); errno = 0;}
 	}
 	errno = 0;
-	fclose(source_fd);
-	if (errno) {myPrintErrno("myFileCopy source close error?"); errno = 0;}
-	fclose(dest_fd);
-#ifndef SNS
-	if (errno) myPrintErrno("myFileCopy dest close error?");
-#endif
+	if (fclose(source_fd) != 0){
+                errlogPrintf("save_restore:myFileCopy: Error closing file '%s'\n", source);
+		if (errno) myPrintErrno("myFileCopy", __FILE__, __LINE__);
+	}
+	errno = 0;
+	if (fclose(dest_fd) != 0){
+		errlogPrintf("save_restore:myFileCopy: Error closing file '%s'\n", dest);
+		if (errno) myPrintErrno("myFileCopy", __FILE__, __LINE__);
+	}
+	errno = 0;
 	if (size && (chars_printed != size)) {
 		errlogPrintf("myFileCopy: size=%d, chars_printed=%d\n",
 			size, chars_printed);
@@ -196,14 +202,23 @@ STATIC long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *valu
 	DBADDR	dbaddr;
 	DBADDR	*paddr = &dbaddr;
 	dbfType field_type = pdbentry->pflddes->field_type;
+	short special = pdbentry->pflddes->special;
 	
-	if (save_restoreDebug >= 15) errlogPrintf("dbrestore:scalar_restore:entry:field type '%s'\n", pamapdbfType[field_type].strvalue);
+	if (save_restoreDebug >= 5) errlogPrintf("dbrestore:scalar_restore:entry:field type '%s'\n", pamapdbfType[field_type].strvalue);
 	switch (field_type) {
 	case DBF_STRING: case DBF_ENUM:
 	case DBF_CHAR:   case DBF_UCHAR:
 	case DBF_SHORT:  case DBF_USHORT:
 	case DBF_LONG:   case DBF_ULONG:
 	case DBF_FLOAT:  case DBF_DOUBLE:
+		/*
+		 * check SPC_CALC fields against new (3.13.9) requirement that CALC
+		 * fields not be empty.
+		 */
+		if ((field_type==DBF_STRING) && (special==SPC_CALC)){
+			if (*value_string == 0) strcpy(value_string, "0");
+		}
+
 		status = dbPutString(pdbentry, value_string);
 		if (save_restoreDebug >= 15) {
 			errlogPrintf("dbrestore:scalar_restore: dbPutString() returns %ld:", status);
@@ -726,7 +741,7 @@ int reboot_restore(char *filename, initHookState init_state)
 		errlogPrintf("dbrestore:reboot_restore: header line '%s'\n", buffer);
 	}
 	status = fseek(inp_fd, 0, SEEK_SET); /* go to beginning */
-	if (status) myPrintErrno("checkFile");
+	if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
 
 	/* restore from data file */
 	num_errors = 0;
@@ -922,7 +937,7 @@ FILE *checkFile(const char *file)
 	char datetime[32];
 	int status;
 
-	if ((inp_fd = fopen(file, "rb")) == NULL) {
+	if ((inp_fd = fopen(file, "r")) == NULL) {
 		errlogPrintf("save_restore: Can't open file '%s'.\n", file);
 		return(0);
 	}
@@ -933,7 +948,7 @@ FILE *checkFile(const char *file)
 	if (!versionstr) {
 		/* file has no version number */
 		status = fseek(inp_fd, 0, SEEK_SET); /* go to beginning */
-		if (status) myPrintErrno("checkFile");
+		if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
 		return(inp_fd);	/* Assume file is ok */
 	}
 	if (isdigit((int)versionstr[1]))
@@ -944,25 +959,25 @@ FILE *checkFile(const char *file)
 	/* <END> check started in v1.8 */
 	if (version < 1.8) {
 		status = fseek(inp_fd, 0, SEEK_SET); /* go to beginning */
-		if (status) myPrintErrno("checkFile");
+		if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
 		return(inp_fd);	/* Assume file is ok. */
 	}
 	/* check out "successfully written" marker */
 	status = fseek(inp_fd, -6, SEEK_END);
-	if (status) myPrintErrno("checkFile");
+	if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
 	fgets(tmpstr, 6, inp_fd);
 	if (strncmp(tmpstr, "<END>", 5) == 0) {
 		status = fseek(inp_fd, 0, SEEK_SET); /* file is ok.  go to beginning */
-		if (status) myPrintErrno("checkFile");
+		if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
 		return(inp_fd);
 	}
 	
 	status = fseek(inp_fd, -7, SEEK_END);
-	if (status) myPrintErrno("checkFile");
+	if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
 	fgets(tmpstr, 7, inp_fd);
 	if (strncmp(tmpstr, "<END>", 5) == 0) {
 		status = fseek(inp_fd, 0, SEEK_SET); /* file is ok.  go to beginning */
-		if (status) myPrintErrno("checkFile");
+		if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
 		return(inp_fd);
 	}
 

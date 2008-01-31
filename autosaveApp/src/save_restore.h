@@ -1,11 +1,11 @@
 /* save_restore.h */
-#define STATIC_VARS 1
+#define STATIC_VARS 0
 #define DEBUG 1
 
 #if STATIC_VARS
-#define STATIC
-#else
 #define STATIC static
+#else
+#define STATIC
 #endif
 
 #define     TATTLE(CA_ERROR_CODE, FMT, ARG) \
@@ -56,7 +56,7 @@ struct restoreList {
 		char *pass1StatusStr[MAXRESTOREFILES];
 };
 
-extern void myPrintErrno(char *s);
+extern void myPrintErrno(char *s, char *file, int line);
 extern FILE *fopen_and_check(const char *file, long *status);
 
 extern long SR_get_array_info(char *name, long *num_elements, long *field_size, long *field_type);
