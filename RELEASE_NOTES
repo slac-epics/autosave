@@ -1,3 +1,6 @@
+autosave-R4-4-lcls1:
+Synch with APS autosave version 4-4 package
+Built against EPICS R3.14.10 and RTEMS 4.9
 
 autosave-R4-2-1-lcls2:
 More cosmetic changes for R3.14.9

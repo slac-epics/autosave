@@ -53,9 +53,13 @@
  *                file-size differences caused by different line terminators
  *                on different operating systems.  (Thanks to Kay Kasemir.)
  * 01/02/07  tmm  v4.9 Convert empty SPC_CALC fields to "0" before restoring.
+ * 03/19/07  tmm  v4.10 Don't print errno unless function returns an error.
+ * 08/03/07  tmm  v4.11 Added functions makeAutosaveFileFromDbInfo() and makeAutosaveFiles()
+ *                which search through the loaded database, looking for info nodes indicating
+ *                fields that are to be autosaved.
  *                
  */
-#define VERSION "4.9"
+#define VERSION "4.11"
 
 #include	<stdio.h>
 #include	<errno.h>
@@ -153,7 +157,7 @@ STATIC int myFileCopy(const char *source, const char *dest)
 	errno = 0;
 	if ((source_fd = fopen(source,"rb")) == NULL) {
 		errlogPrintf("save_restore:myFileCopy: Can't open file '%s'\n", source);
-		if (errno) myPrintErrno("myFileCopy", __FILE__, __LINE__);
+		/* if (errno) myPrintErrno("myFileCopy", __FILE__, __LINE__); */
 		if (++save_restoreIoErrors > save_restoreRemountThreshold) 
 			save_restoreNFSOK = 0;
 		return(ERROR);
@@ -165,7 +169,7 @@ STATIC int myFileCopy(const char *source, const char *dest)
 	 */
 	if ((dest_fd = fopen(dest,"wb")) == NULL) {
 		errlogPrintf("save_restore:myFileCopy: Can't open file '%s'\n", dest);
-		if (errno) myPrintErrno("myFileCopy", __FILE__, __LINE__);
+		/* if (errno) myPrintErrno("myFileCopy", __FILE__, __LINE__); */
 		fclose(source_fd);
 		return(ERROR);
 	}
@@ -173,17 +177,17 @@ STATIC int myFileCopy(const char *source, const char *dest)
 	while ((bp=fgets(buffer, BUF_SIZE, source_fd))) {
 		errno = 0;
 		chars_printed += fprintf(dest_fd, "%s", bp);
-		if (errno) {myPrintErrno("myFileCopy", __FILE__, __LINE__); errno = 0;}
+		/* if (errno) {myPrintErrno("myFileCopy", __FILE__, __LINE__); errno = 0;} */
 	}
 	errno = 0;
 	if (fclose(source_fd) != 0){
                 errlogPrintf("save_restore:myFileCopy: Error closing file '%s'\n", source);
-		if (errno) myPrintErrno("myFileCopy", __FILE__, __LINE__);
+		/* if (errno) myPrintErrno("myFileCopy", __FILE__, __LINE__); */
 	}
 	errno = 0;
 	if (fclose(dest_fd) != 0){
 		errlogPrintf("save_restore:myFileCopy: Error closing file '%s'\n", dest);
-		if (errno) myPrintErrno("myFileCopy", __FILE__, __LINE__);
+		/* if (errno) myPrintErrno("myFileCopy", __FILE__, __LINE__); */
 	}
 	errno = 0;
 	if (size && (chars_printed != size)) {
@@ -686,7 +690,7 @@ int reboot_restore(char *filename, initHookState init_state)
 	printf("reboot_restore (v%s): entry for file '%s'\n", RESTORE_VERSION, filename);
 	/* initialize database access routines */
 	if (!pdbbase) {
-		errlogPrintf("No Database Loaded\n");
+		errlogPrintf("reboot_restore: No Database Loaded\n");
 		return(OK);
 	}
 	dbInitEntry(pdbbase,pdbentry);
@@ -729,6 +733,7 @@ int reboot_restore(char *filename, initHookState init_state)
 		errlogPrintf("save_restore: Can't open save file.");
 		if (pStatusVal) *pStatusVal = SR_STATUS_FAIL;
 		if (statusStr) strcpy(statusStr, "Can't open save file.");
+		dbFinishEntry(pdbentry);
 		return(ERROR);
 	}
 	if (status) {
@@ -741,7 +746,7 @@ int reboot_restore(char *filename, initHookState init_state)
 		errlogPrintf("dbrestore:reboot_restore: header line '%s'\n", buffer);
 	}
 	status = fseek(inp_fd, 0, SEEK_SET); /* go to beginning */
-	if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
+	if (status) myPrintErrno("checkFile: fseek error ", __FILE__, __LINE__);
 
 	/* restore from data file */
 	num_errors = 0;
@@ -948,7 +953,7 @@ FILE *checkFile(const char *file)
 	if (!versionstr) {
 		/* file has no version number */
 		status = fseek(inp_fd, 0, SEEK_SET); /* go to beginning */
-		if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
+		if (status) myPrintErrno("checkFile: fseek error ", __FILE__, __LINE__);
 		return(inp_fd);	/* Assume file is ok */
 	}
 	if (isdigit((int)versionstr[1]))
@@ -959,25 +964,25 @@ FILE *checkFile(const char *file)
 	/* <END> check started in v1.8 */
 	if (version < 1.8) {
 		status = fseek(inp_fd, 0, SEEK_SET); /* go to beginning */
-		if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
+		if (status) myPrintErrno("checkFile: fseek error ", __FILE__, __LINE__);
 		return(inp_fd);	/* Assume file is ok. */
 	}
 	/* check out "successfully written" marker */
 	status = fseek(inp_fd, -6, SEEK_END);
-	if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
+	if (status) myPrintErrno("checkFile: fseek error ", __FILE__, __LINE__);
 	fgets(tmpstr, 6, inp_fd);
 	if (strncmp(tmpstr, "<END>", 5) == 0) {
 		status = fseek(inp_fd, 0, SEEK_SET); /* file is ok.  go to beginning */
-		if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
+		if (status) myPrintErrno("checkFile: fseek error ", __FILE__, __LINE__);
 		return(inp_fd);
 	}
 	
 	status = fseek(inp_fd, -7, SEEK_END);
-	if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
+	if (status) myPrintErrno("checkFile: fseek error ", __FILE__, __LINE__);
 	fgets(tmpstr, 7, inp_fd);
 	if (strncmp(tmpstr, "<END>", 5) == 0) {
 		status = fseek(inp_fd, 0, SEEK_SET); /* file is ok.  go to beginning */
-		if (status) myPrintErrno("checkFile", __FILE__, __LINE__);
+		if (status) myPrintErrno("checkFile: fseek error ", __FILE__, __LINE__);
 		return(inp_fd);
 	}
 
@@ -1204,6 +1209,60 @@ long SR_write_array_data(FILE *out_fd, char *name, void *pArray, long num_elemen
 	return(n);
 }
 
+#define BUFSIZE 100
+/*
+ * Look through the database for info nodes with the specified info_name, and get the
+ * associated info_value string.  Interpret this string as a list of field names.  Write
+ * the PV's thus accumulated to the file <fileBaseName>.  (If <fileBaseName> doesn't contain
+ * ".req", append it.)
+ */
+void makeAutosaveFileFromDbInfo(char *fileBaseName, char *info_name)
+{
+	DBENTRY		dbentry;
+	DBENTRY		*pdbentry = &dbentry;
+	const char *info_value, delimiters[] = " \t\n\r.";
+	char		buf[BUFSIZE], *field, *fields=buf;
+	FILE 		*out_fd;
+
+	if (!pdbbase) {
+		errlogPrintf("autosave:makeAutosaveFileFromDbInfo: No Database Loaded\n");
+		return;
+	}
+	if (strstr(fileBaseName, ".req")) {
+		strncpy(buf, fileBaseName, BUFSIZE);
+	} else {
+		sprintf(buf, "%s.req", fileBaseName);
+	}
+	if ((out_fd = fopen(buf,"w")) == NULL) {
+		errlogPrintf("save_restore:makeAutosaveFileFromDbInfo - unable to open file '%s'\n", buf);
+		return;
+	}
+
+	dbInitEntry(pdbbase,pdbentry);
+	/* loop over all record types */
+	dbFirstRecordType(pdbentry);
+	do {
+		/* loop over all records of current type*/
+		dbFirstRecord(pdbentry);
+		do {
+			info_value = dbGetInfo(pdbentry, info_name);
+			if (info_value) {
+				/* printf("record %s.autosave = '%s'\n", dbGetRecordName(pdbentry), info_value); */
+				strncpy(fields, info_value, BUFSIZE);
+				for (field = strtok(fields, delimiters); field; field = strtok(NULL, delimiters)) {
+					if (dbFindField(pdbentry, field) == 0) {
+						fprintf(out_fd, "%s.%s\n", dbGetRecordName(pdbentry), field);
+					} else {
+						printf("makeAutosaveFileFromDbInfo: %s.%s not found\n", dbGetRecordName(pdbentry), field);
+					}
+				}
+			}
+		} while (dbNextRecord(pdbentry) == 0);
+	} while (dbNextRecordType(pdbentry) == 0);
+	dbFinishEntry(pdbentry);
+	fclose(out_fd);
+	return;
+}
 
 /* set_pass0_restoreFile() */
 STATIC const iocshArg set_passN_Arg = {"file",iocshArgString};
@@ -1228,11 +1287,31 @@ STATIC void dbrestoreShow_CallFunc(const iocshArgBuf *args)
     dbrestoreShow();
 }
 
+/* void makeAutosaveFileFromDbInfo(char *filename, char *info_name) */
+STATIC const iocshArg makeAutosaveFileFromDbInfo_Arg0 = {"filename",iocshArgString};
+STATIC const iocshArg makeAutosaveFileFromDbInfo_Arg1 = {"info_name",iocshArgString};
+STATIC const iocshArg * const makeAutosaveFileFromDbInfo_Args[2] = {&makeAutosaveFileFromDbInfo_Arg0, &makeAutosaveFileFromDbInfo_Arg1};
+STATIC const iocshFuncDef makeAutosaveFileFromDbInfo_FuncDef = {"makeAutosaveFileFromDbInfo",2,makeAutosaveFileFromDbInfo_Args};
+STATIC void makeAutosaveFileFromDbInfo_CallFunc(const iocshArgBuf *args)
+{
+    makeAutosaveFileFromDbInfo(args[0].sval, args[1].sval);
+}
+
+/* void makeAutosaveFiles(void) */
+STATIC const iocshFuncDef makeAutosaveFiles_FuncDef = {"makeAutosaveFiles",0,NULL};
+STATIC void makeAutosaveFiles_CallFunc(const iocshArgBuf *args)
+{
+    makeAutosaveFileFromDbInfo("info_settings.req", "autosaveFields");
+    makeAutosaveFileFromDbInfo("info_positions.req", "autosaveFields_pass0");
+}
+
 void dbrestoreRegister(void)
 {
     iocshRegister(&set_pass0_FuncDef, set_pass0_CallFunc);
     iocshRegister(&set_pass1_FuncDef, set_pass1_CallFunc);
 	iocshRegister(&dbrestoreShow_FuncDef, dbrestoreShow_CallFunc);
+	iocshRegister(&makeAutosaveFileFromDbInfo_FuncDef, makeAutosaveFileFromDbInfo_CallFunc);
+	iocshRegister(&makeAutosaveFiles_FuncDef, makeAutosaveFiles_CallFunc);
 }
 
 epicsExportRegistrar(dbrestoreRegister);
