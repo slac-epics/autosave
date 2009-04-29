@@ -1,3 +1,22 @@
+#==============================================================
+#
+#  Name: RELEASE_NOTES
+#
+#  Rem: This files describes release notes for
+#       the autosave support.
+#
+#  Auth: dd-mmm-yyyy, Tim Moony          (mooney@aps.anl.gov)
+#  Rev:  dd-mmm-yyyy, Reviewer's Name    (USERNAME)
+#------------------------------------------------------------
+#  Mod:
+#        29-Apr-2009, K. Luchini         (LUCHINI):
+#           release autosave-R4-4-lcls2
+#
+#==============================================================
+#
+autosave-R4-4-lcls2:
+Built against EPICS R3.14.8.2 and RTEMS 4.9.1 as well
+
 autosave-R4-4-lcls1:
 Synch with APS autosave version 4-4 package
 Built against EPICS R3.14.10 and RTEMS 4.9
