@@ -14,6 +14,7 @@ include $(TOP)/configure/CONFIG
 DB += save_restoreStatus.db
 DB += SR_array_test.db
 DB += SR_test.db
+DB += infoExample.db
 
 #----------------------------------------------------
 # If <anyname>.db template is not named <anyname>*.template add

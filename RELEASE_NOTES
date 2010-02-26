@@ -14,6 +14,10 @@
 #
 #==============================================================
 #
+autosave-R4-5-lcls1:   Built against rtems 4.9.3 and 
+                       EPICS BASE: base-R3-14-8-2-lcls5
+                       New version of autosave from APS as well:
+                       http://www.aps.anl.gov/bcda/synApps/autosave/autosave.html                   
 autosave-R4-4-lcls2:
 Built against EPICS R3.14.8.2 and RTEMS 4.9.1 as well
 

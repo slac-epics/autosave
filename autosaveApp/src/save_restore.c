@@ -134,7 +134,12 @@
 #ifdef vxWorks
 #include	<vxWorks.h>
 #include	<stdioLib.h>
-#include	<nfsDrv.h>
+
+/* nfsDrv.h was renamed nfsDriver.h in Tornado 2.2.2 */
+/* #include	<nfsDrv.h> */
+extern STATUS nfsMount(char *host, char *fileSystem, char *localName);
+extern STATUS nfsUnmount(char *localName);
+
 #include	<ioLib.h>
 extern int logMsg(char *fmt, ...);
 #else
@@ -1225,7 +1230,7 @@ STATIC int write_it(char *filename, struct chlist *plist)
 		problem |= CLOSE_FAILED;
 		goto trouble;
 	}
-#if SET_FILE_PERMISSIONS
+#if 0 /* SET_FILE_PERMISSIONS */
 	if (filedes >= 0) {
 		close(filedes);
 		filedes = -1;
@@ -1248,7 +1253,7 @@ trouble:
 		errlogPrintf("save_restore:write_it: Giving up on this attempt to write '%s'. [%s]\n",
 			plist->save_file, datetime);
 	}
-#if SET_FILE_PERMISSIONS
+#if 0 /* SET_FILE_PERMISSIONS */
 	if (filedes >= 0) {
 		close(filedes);
 		filedes = -1;
@@ -2341,16 +2346,15 @@ STATIC int readReqFile(const char *reqFile, struct chlist *plist, char *macrostr
 	 * path and/or file name will be read when it's time to write the file.  Currently,
 	 * this can only be done when the list is defined.
 	 */
-	if (macGetValue(handle, "SAVEPATHPV", name, 80) > 0) {
-		plist->do_backups = 0;
-		strncpy(plist->savePathPV, name, 80);
-	}
-	if (macGetValue(handle, "SAVENAMEPV", name, 80) > 0) {
-		plist->do_backups = 0;
-		strncpy(plist->saveNamePV, name, 80);
-	}
-
 	if (handle) {
+		if (macGetValue(handle, "SAVEPATHPV", name, 80) > 0) {
+			plist->do_backups = 0;
+			strncpy(plist->savePathPV, name, 80);
+		}
+		if (macGetValue(handle, "SAVENAMEPV", name, 80) > 0) {
+			plist->do_backups = 0;
+			strncpy(plist->saveNamePV, name, 80);
+		}
 		macDeleteHandle(handle);
 		if (pairs) free(pairs);
 	}
