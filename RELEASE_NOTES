@@ -9,15 +9,21 @@
 #  Rev:  dd-mmm-yyyy, Reviewer's Name    (USERNAME)
 #------------------------------------------------------------
 #  Mod:
+#        20-Mar-2010, S. Hoobler         (SONYA):
+#           release autosave-R4-5-lcls2
 #        29-Apr-2009, K. Luchini         (LUCHINI):
 #           release autosave-R4-4-lcls2
 #
 #==============================================================
 #
+autosave-R4-5-lcls2:   Built against rtems 4.9.4 and 
+                       EPICS BASE: base-R3-14-8-2-lcls6
+
 autosave-R4-5-lcls1:   Built against rtems 4.9.3 and 
                        EPICS BASE: base-R3-14-8-2-lcls5
                        New version of autosave from APS as well:
                        http://www.aps.anl.gov/bcda/synApps/autosave/autosave.html                   
+
 autosave-R4-4-lcls2:
 Built against EPICS R3.14.8.2 and RTEMS 4.9.1 as well
 
