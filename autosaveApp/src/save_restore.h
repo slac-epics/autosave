@@ -1,3 +1,10 @@
+#ifndef	AUTOSAVE_SAVE_RESTORE_H
+#define	AUTOSAVE_SAVE_RESTORE_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif	/* __cplusplus */
+
 /* save_restore.h */
 #define STATIC_VARS 0
 #define DEBUG 1
@@ -25,9 +32,8 @@
 #define SR_STATUS_FAIL		1
 #define SR_STATUS_INIT		0
 
-/* Make sure to leave room for trailing null */
-static char SR_STATUS_STR[5][10] =
-	{"No Status", " Failure ", " Warning ", " Warning ", "    Ok   "};
+/* Status strings */
+extern char SR_STATUS_STR[5][10];
 
 #define FLOAT_FMT "%.7g"
 #define DOUBLE_FMT "%.14g"
@@ -96,3 +102,9 @@ extern volatile int	save_restoreRemountThreshold;
 		*dd++ = *ss++;					\
 	*dd = '\0';							\
 }
+
+#ifdef __cplusplus
+}
+#endif	/* __cplusplus */
+
+#endif	/* AUTOSAVE_SAVE_RESTORE_H */
