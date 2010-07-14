@@ -161,6 +161,10 @@ extern int logMsg(char *fmt, ...);
 #define TIMEFMT "%a %b %d %I:%M:%S %Y\n"	/* e.g. 'Fri Sep 13 00:00:00 1986\n'	*/
 #define TIMEFMT_noY "%a %b %d %I:%M:%S"		/* e.g. 'Fri Sep 13 00:00:00'			*/
 
+/* Make sure to leave room for trailing null */
+char SR_STATUS_STR[5][10] =
+	{"No Status", " Failure ", " Warning ", " Warning ", "    Ok   "};
+
 struct chlist {								/* save set list element */
 	struct chlist	*pnext;					/* next list */
 	struct channel	*pchan_list;			/* channel list head */
