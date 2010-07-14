@@ -81,6 +81,7 @@ extern int reload_manual_set(char * filename, char *macrostring);
 extern int fdbrestore(char *filename);
 extern int fdbrestoreX(char *filename);
 extern int request_manual_restore(char *filename, int file_type);
+extern int set_savefile_name(char *filename, char *save_filename);
 
 extern int	save_restoreNFSOK;
 extern int	save_restoreIoErrors;
