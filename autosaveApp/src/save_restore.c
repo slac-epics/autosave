@@ -1913,7 +1913,7 @@ int fdbrestoreX(char *filename)
 	return(request_manual_restore(filename, FROM_ASCII_FILE));
 }
 
-STATIC int request_manual_restore(char *filename, int file_type)
+int request_manual_restore(char *filename, int file_type)
 {
 	epicsEventWaitStatus s;
 

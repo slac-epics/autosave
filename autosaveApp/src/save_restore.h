@@ -75,6 +75,12 @@ extern volatile int save_restoreDatedBackupFiles;
 extern struct restoreList restoreFileList;
 extern int myFileCopy(const char *source, const char *dest);
 extern void dbrestoreShow(void);
+extern int manual_save(char *request_file);
+extern int create_manual_set(char *filename, char *macrostring);
+extern int reload_manual_set(char * filename, char *macrostring);
+extern int fdbrestore(char *filename);
+extern int fdbrestoreX(char *filename);
+extern int request_manual_restore(char *filename, int file_type);
 
 extern int	save_restoreNFSOK;
 extern int	save_restoreIoErrors;
