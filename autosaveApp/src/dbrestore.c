@@ -57,9 +57,10 @@
  * 08/03/07  tmm  v4.11 Added functions makeAutosaveFileFromDbInfo() and makeAutosaveFiles()
  *                which search through the loaded database, looking for info nodes indicating
  *                fields that are to be autosaved.
+ * 09/11/09  tmm  v4.12 If recordname is an alias (>=3.14.11), don't search for info nodes.
  *                
  */
-#define VERSION "4.11"
+#define VERSION "4.12"
 
 #include	<stdio.h>
 #include	<errno.h>
@@ -79,6 +80,7 @@
 #include	<dbConvertFast.h>	/* dbFastPutConvertRoutine */
 #include	<initHooks.h>
 #include	<epicsThread.h>
+#include	<errlog.h>
 #include	<iocsh.h>
 #include 	"fGetDateStr.h"
 #include	"save_restore.h"
@@ -89,6 +91,10 @@
 #define OK 0
 #define ERROR -1
 #endif
+
+/* EPICS base version tests.*/
+#define LT_EPICSBASE(v,r,l) ((EPICS_VERSION<=(v)) && (EPICS_REVISION<=(r)) && (EPICS_MODIFICATION<(l)))
+#define GE_EPICSBASE(v,r,l) ((EPICS_VERSION>=(v)) && (EPICS_REVISION>=(r)) && (EPICS_MODIFICATION>=(l)))
 
 STATIC char 	*RESTORE_VERSION = VERSION;
 
@@ -763,13 +769,19 @@ int reboot_restore(char *filename, initHookState init_state)
 		 * xxx:interp.E 100
 		 * xxx:interp.C @array@ { "1" "0.99" }
 		 */
+		PVname[0] = '\0';
+		value_string[0] = '\0';
 		n = sscanf(bp,"%80s%c%[^\n\r]", PVname, &c, value_string);
 		if (n<3) *value_string = 0;
+		if ((n<1) || (PVname[0] == '\0')) {
+			if (save_restoreDebug >= 10) errlogPrintf("dbrestore:reboot_restore: line (fragment) '%s' ignored.\n", bp);
+			continue;
+		}
 		if (PVname[0] == '#') /* user must have edited the file manually; accept this line as a comment */
 			continue;
 		if (strlen(PVname) >= 80) {
-			/* must a munged input line */
-			errlogPrintf("save_restore: '%s' is too long to be a PV name.\n", PVname);
+			/* must be a munged input line */
+			errlogPrintf("dbrestore:reboot_restore: '%s' is too long to be a PV name.\n", PVname);
 			continue;
 		}
 		if (isalpha((int)PVname[0]) || isdigit((int)PVname[0])) {
@@ -784,7 +796,7 @@ int reboot_restore(char *filename, initHookState init_state)
 				errlogPrintf("dbFindRecord for '%s' failed\n", PVname);
 				num_errors++; found_field = 0;
 			} else if (dbFoundField(pdbentry) == 0) {
-				errlogPrintf("save_restore: dbFindRecord did not find field '%s'\n", PVname);
+				errlogPrintf("dbrestore:reboot_restore: dbFindRecord did not find field '%s'\n", PVname);
 				num_errors++; found_field = 0;
 			}
 			if (found_field) {
@@ -794,10 +806,10 @@ int reboot_restore(char *filename, initHookState init_state)
 					status = SR_array_restore(pass, inp_fd, PVname, value_string);
 				}
 				if (status) {
-					errlogPrintf("save_restore: restore for PV '%s' failed\n", PVname);
+					errlogPrintf("dbrestore:reboot_restore: restore for PV '%s' failed\n", PVname);
 					num_errors++;
 				}
-			} /* if (found_field) {... */
+			} /* if (found_field) ... */
 		} else if (PVname[0] == '!') {
 			/*
 			* string is an error message -- something like:
@@ -1209,7 +1221,7 @@ long SR_write_array_data(FILE *out_fd, char *name, void *pArray, long num_elemen
 	return(n);
 }
 
-#define BUFSIZE 100
+#define BUFFER_SIZE 2048	/* qiao: generate a larger buffer for the info field */
 /*
  * Look through the database for info nodes with the specified info_name, and get the
  * associated info_value string.  Interpret this string as a list of field names.  Write
@@ -1221,15 +1233,16 @@ void makeAutosaveFileFromDbInfo(char *fileBaseName, char *info_name)
 	DBENTRY		dbentry;
 	DBENTRY		*pdbentry = &dbentry;
 	const char *info_value, delimiters[] = " \t\n\r.";
-	char		buf[BUFSIZE], *field, *fields=buf;
+	char		buf[BUFFER_SIZE], *field, *fields=buf;
 	FILE 		*out_fd;
+	int			searchRecord;
 
 	if (!pdbbase) {
 		errlogPrintf("autosave:makeAutosaveFileFromDbInfo: No Database Loaded\n");
 		return;
 	}
 	if (strstr(fileBaseName, ".req")) {
-		strncpy(buf, fileBaseName, BUFSIZE);
+		strncpy(buf, fileBaseName, BUFFER_SIZE);
 	} else {
 		sprintf(buf, "%s.req", fileBaseName);
 	}
@@ -1244,17 +1257,24 @@ void makeAutosaveFileFromDbInfo(char *fileBaseName, char *info_name)
 	do {
 		/* loop over all records of current type*/
 		dbFirstRecord(pdbentry);
+#if GE_EPICSBASE(3,14,11)
+		searchRecord = dbIsAlias(pdbentry) ? 0 : 1;
+#else
+		searchRecord = 1;
+#endif
 		do {
+			if (searchRecord) {
 			info_value = dbGetInfo(pdbentry, info_name);
 			if (info_value) {
 				/* printf("record %s.autosave = '%s'\n", dbGetRecordName(pdbentry), info_value); */
-				strncpy(fields, info_value, BUFSIZE);
+				strncpy(fields, info_value, BUFFER_SIZE);
 				for (field = strtok(fields, delimiters); field; field = strtok(NULL, delimiters)) {
 					if (dbFindField(pdbentry, field) == 0) {
 						fprintf(out_fd, "%s.%s\n", dbGetRecordName(pdbentry), field);
 					} else {
 						printf("makeAutosaveFileFromDbInfo: %s.%s not found\n", dbGetRecordName(pdbentry), field);
 					}
+				}
 				}
 			}
 		} while (dbNextRecord(pdbentry) == 0);

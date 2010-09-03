@@ -19,13 +19,20 @@ asVerify_LIBS   += Com
 DBD += autosave.dbd
 DBD += autosaveSupport.dbd
 
+#include files
+INC += osdNfs.h
+
 #===================================================
 # create library for linking will install in <lib>
 #===================================================
 LIBRARY_IOC += autosave
 
+#os independent code
 autosave_SRCS += dbrestore.c save_restore.c
 autosave_SRCS += initHooks.c fGetDateStr.c
+
+#os dependent code
+autosave_SRCS += osdNfs.c
 
 autosave_LIBS += $(EPICS_BASE_IOC_LIBS)
 

@@ -10,6 +10,25 @@ content="text/html; charset=iso-8859-1">
 
 <h1 align="center">autosave Release Notes</h1>
 
+<h3>4.7</h3>
+<ul>
+<li> Previously, array-valued PV's whose representation in a .sav file was
+	exactly 119 bytes long would cause reboot_restore to process the PV
+	twice, the second time as a scalar with no restore data.  In the case of
+	an array of char, this resulted in the first element of the array being
+	overwritten with a zero.
+</ul>
+
+<h3>4.6</h3>
+<ul>
+<li> Previously, autosave determined the element count of a PV in
+connect_list(), never revisited it, and ignored PV's whose element
+counts had not been determined.  This prevented autosave from saving
+PV's that failed to connect promptly.
+<li>Don't search for info nodes if a record is an alias.
+</ul>
+
+
 <h3>4.5</h3>
 <ul>
 <li> Previously, autosave restored auto_positions.sav and auto_settings.sav

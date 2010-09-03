@@ -16,6 +16,20 @@
 #
 #==============================================================
 #
+autosave-beta1:        * Synch with autosave R4-7
+                       * Introduced NFS remount function for RTEMS in case of too many
+                         file written failures
+                       * Seperated the NFS mounting code to src/os folder for vxWorks, RTEMS
+                         and Linux
+                       * Added timeout checking for PERIODIC or MONITORED callback functions
+                       * Enabled to reconnect the unconnected CA channels
+                       * Used ca_create_channel + callback instead of ca_search
+                       * Added illegal pointer checking at callback functions
+                       * Added file checking after writting to the disk
+                       * Disconnected all CA channels before existing the program
+                       * Increased the size of info buffer for save list auto generation from
+                         database
+
 autosave-R4-5-lcls2:   Built against rtems 4.9.4 and 
                        EPICS BASE: base-R3-14-8-2-lcls6
 

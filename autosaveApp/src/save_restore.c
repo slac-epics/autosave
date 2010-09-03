@@ -127,17 +127,19 @@
  * 03/10/08  tmm  v5.5 Merged in several improvements from Ben Franksen:
  *                Make use of status PV's optional and controllable by function call.
  *                Report failed connections to PV's at connect time.
- *                Allow embedded '.' in save-file name
+ *                Allow embedded '.' in save-file name.
  */
 #define		SRVERSION "save/restore V5.5"
 
-#ifdef vxWorks
+/* qiao: Moved to osd code */
+/* #ifdef vxWorks
 #include	<vxWorks.h>
-#include	<stdioLib.h>
+#include	<hostLib.h>
+#include	<stdioLib.h> */
 
 /* nfsDrv.h was renamed nfsDriver.h in Tornado 2.2.2 */
 /* #include	<nfsDrv.h> */
-extern STATUS nfsMount(char *host, char *fileSystem, char *localName);
+/* extern STATUS nfsMount(char *host, char *fileSystem, char *localName);
 extern STATUS nfsUnmount(char *localName);
 
 #include	<ioLib.h>
@@ -146,7 +148,7 @@ extern int logMsg(char *fmt, ...);
 #define OK 0
 #define ERROR -1
 #define logMsg errlogPrintf
-#endif
+#endif */
 
 #include	<stdio.h>
 #include	<errno.h>
@@ -173,6 +175,7 @@ extern int logMsg(char *fmt, ...);
 #include	<epicsTime.h>
 #include	"save_restore.h"
 #include 	"fGetDateStr.h"
+#include 	"osdNfs.h"              /* qiao: routine of os dependent code, for NFS */
 
 #ifndef _WIN32
   #define SET_FILE_PERMISSIONS 1
@@ -224,8 +227,6 @@ struct chlist {								/* save set list element */
 	epicsTimeStamp	backup_time;
 	epicsTimeStamp	save_attempt_time;
 	epicsTimeStamp	save_time;
-	/* time_t			backup_time; */
-	/* time_t			save_time; */
 	int				listNumber;				/* future: identify this list's status reporting variables */
 	char			name_PV[PV_NAME_LEN];	/* future: write save-set name to generic PV */
 	chid			name_chid;
@@ -243,6 +244,8 @@ struct chlist {								/* save set list element */
 	char			savePathPV[PV_NAME_LEN], saveNamePV[PV_NAME_LEN];
 	chid			savePathPV_chid, saveNamePV_chid;
 	int				do_backups;
+	epicsTimeStamp		callback_time;		/* qiao: call back time of this list */
+	epicsTimeStamp		reconnect_check_time;   /* qiao: for ca reconnection for the not-connected channels */
 };
 
 struct channel {					/* database channel list element */
@@ -256,6 +259,8 @@ struct channel {					/* database channel list element */
 	long			curr_elements;	/* number of elements from dbGet */
 	long			field_type;		/* field type from dbAddr */
 	void			*pArray;
+	int			channel_connected;      /* qiao: show if the channel is successfully connected. 0 - failed; 1 - successfully */
+	int			just_created;           /* qiao: 1 means the channel is just created, need to be handled */
 };
 
 struct pathListElement {
@@ -299,7 +304,8 @@ STATIC int		manual_restore_status = 0;		/* result of manual_restore operation */
 /*** stuff for reporting status to EPICS client ***/
 STATIC char	status_prefix[30] = "";
 
-STATIC long	SR_status = SR_STATUS_INIT, SR_heartbeat = 0;
+STATIC long	SR_status = SR_STATUS_INIT;
+STATIC unsigned short SR_heartbeat = 0;                /* qiao: heart beat 0/1 in turn */
 /* Make SR_recentlyStr huge because sprintf may overrun (vxWorks has no snprintf) */
 STATIC char	SR_statusStr[STRING_LEN] = "", SR_recentlyStr[300] = "";
 STATIC char	SR_status_PV[PV_NAME_LEN] = "", SR_heartbeat_PV[PV_NAME_LEN] = ""; 
@@ -321,19 +327,22 @@ volatile int	save_restoreIncompleteSetsOk = 1;		/* will save/restore incomplete 
 volatile int	save_restoreDatedBackupFiles = 1;		/* save backups as <filename>.bu or <filename>_YYMMDD-HHMMSS */
 volatile int	save_restoreRetrySeconds = 60;			/* Time before retrying write after a failure. */
 volatile int	save_restoreUseStatusPVs = 1;			/* use PVs for status etc. */
+volatile int	save_restoreCAReconnect = 0;        /* qiao: if there are channels not connected, reconnect them */
+volatile int	save_restoreCallbackTimeout = 600;  /* qiao: if the call back does not work than this time, force to save the data */
 
 epicsExportAddress(int, save_restoreNumSeqFiles);
 epicsExportAddress(int, save_restoreSeqPeriodInSeconds);
 epicsExportAddress(int, save_restoreIncompleteSetsOk);
 epicsExportAddress(int, save_restoreDatedBackupFiles);
 epicsExportAddress(int, save_restoreUseStatusPVs);
+epicsExportAddress(int, save_restoreCAReconnect);        /* qiao: export the new variables */
+epicsExportAddress(int, save_restoreCallbackTimeout);    /* qiao: export the new variables */
 
 /* variables for managing NFS mount */
-char save_restoreNFSHostName[STRING_LEN] = "";
-char save_restoreNFSHostAddr[STRING_LEN] = "";
-STATIC int save_restoreNFSOK=0;
-STATIC int save_restoreIoErrors=0;
-volatile int save_restoreRemountThreshold=10;
+char save_restoreNFSHostName[NFS_PATH_LEN]  = "";        /* qiao: host name of NFS server */
+char save_restoreNFSHostAddr[NFS_PATH_LEN]  = "";        /* qiao: absolute path on NFS server */
+char save_restoreNFSMntPoint[NFS_PATH_LEN]  = "";        /* qiao: local path for mount point */
+volatile int save_restoreRemountThreshold   = 10;
 epicsExportAddress(int, save_restoreRemountThreshold);
 
 /* configuration parameters */
@@ -342,8 +351,8 @@ STATIC int	min_delay	= 1;	/* check need to save every 1 second */
 				/* worst case wait can be min_period + min_delay */
 
 /*** private functions ***/
-STATIC int mountFileSystem(void);
-STATIC void dismountFileSystem(void);
+/* STATIC int mountFileSystem(void);
+STATIC void dismountFileSystem(void); */                 /* qiao: realized in osd code */
 STATIC void periodic_save(CALLBACK *pcallback);
 STATIC void triggered_save(struct event_handler_args);
 STATIC void on_change_timer(CALLBACK *pcallback);
@@ -361,6 +370,9 @@ STATIC int do_manual_restore(char *filename, int file_type);
 STATIC int readReqFile(const char *file, struct chlist *plist, char *macrostring);
 STATIC int do_remove_data_set(char *filename);
 STATIC int request_manual_restore(char *filename, int file_type);
+
+STATIC void ca_connection_callback(struct connection_handler_args args);      /* qiao: call back function for ca connection of the dataset channels */
+STATIC void ca_disconnect();                                                  /* qiao: disconnect all existing CA channels */
 
 /*** user-callable functions ***/
 int fdbrestore(char *filename);
@@ -398,6 +410,8 @@ void save_restoreSet_RetrySeconds(int seconds) {
 	if (seconds >= 0) save_restoreRetrySeconds = seconds;
 }
 void save_restoreSet_UseStatusPVs(int ok) {save_restoreUseStatusPVs = ok;}
+void save_restoreSet_CAReconnect(int ok)    {save_restoreCAReconnect     = ok;}   /* qiao: realize the iocsh interface function */
+void save_restoreSet_CallbackTimeout(int t) {save_restoreCallbackTimeout = t; }   /* qiao: realize the iocsh interface function */
 
 /********************************* code *********************************/
 
@@ -438,6 +452,8 @@ STATIC int waitForListLock(double secondsToWait) {
  * no longer owns.
  */
 
+/* qiao: add plist checking for all these callback functions */
+
 /* method PERIODIC - timer has elapsed */
 STATIC void periodic_save(CALLBACK *pcallback)
 {
@@ -446,7 +462,11 @@ STATIC void periodic_save(CALLBACK *pcallback)
 
     callbackGetUser(userArg, pcallback);
 	plist = (struct chlist *)userArg;
-	plist->save_state |= PERIODIC;
+	if (plist) {
+		plist->save_state |= PERIODIC;
+	} else {
+		logMsg("Periodic saving failure");
+	}
 }
 
 
@@ -455,8 +475,13 @@ STATIC void triggered_save(struct event_handler_args event)
 {
     struct chlist *plist = (struct chlist *) event.usr;
 
-    if (event.dbr)
-	plist->save_state |= TRIGGERED;
+    if (event.dbr) {
+    	if (plist) {
+		plist->save_state |= TRIGGERED;
+	} else {
+		logMsg("Failed to activate triggered saving!");
+	}
+    }
 }
 
 
@@ -471,7 +496,12 @@ STATIC void on_change_timer(CALLBACK *pcallback)
 
 	if (save_restoreDebug >= 10) logMsg("on_change_timer for %s (period is %d seconds)\n",
 			plist->reqFile, plist->monitor_period);
-	plist->save_state |= TIMER;
+			
+	if (plist) {
+		plist->save_state |= TIMER;
+	} else {
+		logMsg("Failed to activate saving with timer!");
+	}	
 }
 
 
@@ -483,11 +513,13 @@ STATIC void on_change_save(struct event_handler_args event)
 		logMsg("on_change_save: event.usr=0x%lx\n", (unsigned long)event.usr);
 	}
     plist = (struct chlist *) event.usr;
-
-    plist->save_state |= CHANGE;
+    
+    if (plist) {
+        plist->save_state |= CHANGE;
+    } else {
+        logMsg("Data changed! But failed to activate saving!");
+    }	
 }
-
-
 
 /* manual_save - user-callable routine to cause a manual set to be saved */
 int manual_save(char *request_file)
@@ -513,17 +545,57 @@ int manual_save(char *request_file)
 	return(OK);
 }
 
-/*** functions to manage NFS mount ***/
-
-void save_restoreSet_NFSHost(char *hostname, char *address) {
-	if (save_restoreNFSOK) dismountFileSystem();
-	strncpy(save_restoreNFSHostName, hostname, (STRING_LEN-1));
-	strncpy(save_restoreNFSHostAddr, address, (STRING_LEN-1));
-	if (save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0] && saveRestoreFilePath[0]) 
-		mountFileSystem();
+/**
+ * qiao: realize the callback function for ca connection 
+ * 
+ * Note: all channel connection flag are set here
+ */
+STATIC void ca_connection_callback(struct connection_handler_args args)
+{
+    struct channel *pchannel = ca_puser(args.chid);            /* pointer to the channel */
+    
+    if(!pchannel) return;                                      /* avoid software crash */
+    
+    if(args.op == CA_OP_CONN_UP) {
+        pchannel -> channel_connected = 1;                     /* indicate the channel is connected */	
+	
+    } else {
+        pchannel -> channel_connected = 0;                     /* indicate the channel becomes disconnected */
+	ca_clear_channel(args.chid);                           /* clear the disconnected channel, release the resources */		
+    }   
 }
 
-STATIC int mountFileSystem()
+/*** qiao: functions to manage NFS mount ***/
+void save_restoreSet_NFSHost(char *hostname, char *address, char *mntpoint) 
+{
+    char datetime[32];
+    fGetDateStr(datetime);
+
+    /* unmount NFS first if already mounted */
+    if (save_restoreNFSOK) {
+        dismountFileSystem(mntpoint);
+
+        errlogPrintf("save_restore:dismountFileSystem:dismounted '%s' [%s]\n", mntpoint, datetime);
+        strncpy(SR_recentlyStr, "nfsUnmount", (STRING_LEN-1));
+    }
+
+    /* get the settings */
+    strcpy(save_restoreNFSHostName, hostname);
+    strcpy(save_restoreNFSHostAddr, address);
+    strcpy(save_restoreNFSMntPoint, mntpoint);
+
+    /* mount the file system */
+    if (mountFileSystem(hostname, address, mntpoint) == NFS_SUCCESS) {
+        save_restoreIoErrors = 0;
+
+        errlogPrintf("save_restore:mountFileSystem:successfully mounted '%s'\n", mntpoint);
+        strncpy(SR_recentlyStr, "nfsMount succeeded", (STRING_LEN-1));
+    }
+    else errlogPrintf("save_restore: Can't nfsMount '%s'\n", mntpoint);
+}
+
+/* qiao: move to os dependent code */
+/* STATIC int mountFileSystem()
 {
 	char	datetime[32];
 
@@ -567,7 +639,7 @@ STATIC void dismountFileSystem()
 #else
 	errlogPrintf("save_restore:dismountFileSystem: not implemented for this OS.\n");
 #endif
-}
+} */
 
 /*** save_restore task ***/
 
@@ -581,6 +653,7 @@ STATIC int save_restore(void)
 	char *cp, nameString[FN_LEN];
 	int i, do_seq_check, just_remounted, n, saveNeeded=0;
 	epicsTimeStamp currTime, last_seq_check, remount_check_time;
+	char datetime[32];
 
 	if (save_restoreDebug)
 			errlogPrintf("save_restore:save_restore: entry; status_prefix='%s'\n", status_prefix);
@@ -590,9 +663,14 @@ STATIC int save_restore(void)
 
 	ca_context_create(ca_enable_preemptive_callback);
 
-#ifdef vxWorks
+	/* qiao: remount NFS for all os */
+/* #ifdef vxWorks
 	if (save_restoreNFSOK == 0) mountFileSystem();
-#endif
+#endif */
+
+	/* qiao: mount the NFS if it fails */
+	if (save_restoreNFSOK == 0)
+		mountFileSystem(save_restoreNFSHostName, save_restoreNFSHostAddr, save_restoreNFSMntPoint);
 
 	/* Build names for save_restore general status PV's with status_prefix */
 	if (save_restoreUseStatusPVs && *status_prefix && (*SR_status_PV == '\0')) {
@@ -654,18 +732,43 @@ STATIC int save_restore(void)
 		do_seq_check = (epicsTimeDiffInSeconds(&currTime, &last_seq_check) >
 			save_restoreSeqPeriodInSeconds/2);
 		if (do_seq_check) last_seq_check = currTime; /* struct copy */
-
+		
 		just_remounted = 0;
-#ifdef vxWorks
-		if ((save_restoreNFSOK == 0) && save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0]) {
+	/* qiao: remount NFS for all os, not only for vxworks */
+/* #ifdef vxWorks
+		if ((save_restoreNFSOK == 0) && save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0]) { */
 			/* NFS problem: Try, every 60 seconds, to remount */
-			if (epicsTimeDiffInSeconds(&currTime, &remount_check_time) > 60.) {
+			/* if (epicsTimeDiffInSeconds(&currTime, &remount_check_time) > 60.) {
 				dismountFileSystem();
 				just_remounted = mountFileSystem();
-				remount_check_time = currTime; /* struct copy */
+				remount_check_time = currTime;
 			}
 		}
-#endif
+#endif */
+
+		/* qiao: remount NFS if necessary. If the file written failure happens more times than defined threshold,
+		 * we will assume the NFS need to be remounted */
+		if (save_restoreNFSOK == 0) {
+			/* NFS problem: Try, every 60 seconds, to remount */
+			if (epicsTimeDiffInSeconds(&currTime, &remount_check_time) > 60.) {
+				remount_check_time = currTime;                           /* struct copy */
+				dismountFileSystem(save_restoreNFSMntPoint);             /* first dismount it */
+
+				if (mountFileSystem(save_restoreNFSHostName, 
+					    	save_restoreNFSHostAddr, 
+					    	save_restoreNFSMntPoint) == NFS_SUCCESS) {
+					just_remounted = 1;                    
+					errlogPrintf("save_restore: %s remounted \n", save_restoreNFSMntPoint);
+					SR_status = SR_STATUS_OK;
+					strcpy(SR_statusStr, "NFS remounted");
+				} else {
+					errlogPrintf("save_restore: failed to remount %s \n", save_restoreNFSMntPoint);
+					SR_status = SR_STATUS_FAIL;
+					strcpy(SR_statusStr, "NFS failed!");
+ 				}
+			}
+        	}
+
 		/* look at each list */
 		while (waitForListLock(5) == 0) {
 			if (save_restoreDebug) errlogPrintf("save_restore: '%s' waiting for listLock()\n", plist->reqFile);
@@ -674,7 +777,39 @@ STATIC int save_restore(void)
 		while (plist != 0) {
 			if (save_restoreDebug >= 30)
 				errlogPrintf("save_restore: '%s' save_state = 0x%x\n", plist->reqFile, plist->save_state);
+				
 			/* connect the channels on the first instance of this set */
+			/* qiao: connect the channels */
+			if (plist->enabled_method == 0) {
+				/* qiao: connect on the first instance of this set */
+				/* qiao: first, Connect to savePathPV and saveNamePV, if they are defined (this is moved from the connect_list() routine */
+				if (plist->savePathPV[0] || plist->saveNamePV[0]) {
+					if (plist->savePathPV[0]) {
+						TATTLE(ca_search(plist->savePathPV,&plist->savePathPV_chid), "save_restore: ca_search(%s) returned %s", plist->savePathPV);
+					}
+					if (plist->saveNamePV[0]) {
+						TATTLE(ca_search(plist->saveNamePV,&plist->saveNamePV_chid), "save_restore: ca_search(%s) returned %s", plist->saveNamePV);
+					}
+					if (ca_pend_io(0.5)!=ECA_NORMAL) {
+						errlogPrintf("save_restore: Can't connect to list-specific path/name PV(s)\n");
+						
+						plist->status = SR_STATUS_WARN;
+						strcpy(plist->statusStr, "List path/name PVs connection failed");
+					}
+				}
+	
+				/* qiao: second, connect the list */
+				plist -> not_connected = connect_list(plist); 
+				plist -> reconnect_check_time = currTime;
+				
+			} else if (save_restoreCAReconnect &&
+				plist -> not_connected > 0 && 
+				epicsTimeDiffInSeconds(&currTime, &plist -> reconnect_check_time) > 60.) {
+				/* qiao: try to connect to the disconnected channels every 60s if user does not allow incomplete sets */
+				plist -> reconnect_check_time = currTime;
+				plist -> not_connected = connect_list(plist);
+			}
+
 			/*
 			 * We used to call enable_list() from create_data_set(), if the
 			 * list already existed and was just getting a new method.  In that
@@ -683,8 +818,15 @@ STATIC int save_restore(void)
 			 * setting up CA monitors that we're going to have to manage, so we
 			 * make all the calls to enable_list().
 			 */ 
-			if (plist->enabled_method == 0) plist->not_connected = connect_list(plist);
 			if (plist->enabled_method != plist->save_method) enable_list(plist);
+
+			/* qiao: check the call back timeout if the save method is periodic or monitored */
+			if((plist->save_method & PERIODIC) || (plist->save_method & MONITORED) == MONITORED) {
+				if(epicsTimeDiffInSeconds(&currTime, &plist -> callback_time) > save_restoreCallbackTimeout) {
+			    		plist->save_state = plist->save_method;
+			    		errlogPrintf("Callback time out!\n");
+				}	
+			}
 
 			/*
 			 * Save lists that have triggered.  Save lists that are in failure, if we've just remounted,
@@ -701,7 +843,7 @@ STATIC int save_restore(void)
 				else if (epicsTimeDiffInSeconds(&currTime, &plist->save_attempt_time) > save_restoreRetrySeconds)
 					saveNeeded = TRUE;
 			}
-
+			
 			if (saveNeeded) {
 
 				/* fetch values all of the channels */
@@ -724,6 +866,8 @@ STATIC int save_restore(void)
 			/*** restart timers and reset save requests ***/
 			if (plist->save_state & PERIODIC) {
 				callbackRequestDelayed(&plist->periodicCb, (double)plist->period);
+				plist -> callback_time = currTime;                                /* qiao: rememter the time starting callback */
+				fGetDateStr(datetime);
 			}
 			if (plist->save_state & SINGLE_EVENTS) {
 				/* Note that this clears PERIODIC, TRIGGERED, and MANUAL bits */
@@ -732,6 +876,8 @@ STATIC int save_restore(void)
 			if ((plist->save_state & MONITORED) == MONITORED) {
 				callbackRequestDelayed(&plist->monitorCb, (double)plist->monitor_period);
 				plist->save_state = plist->save_state & ~MONITORED;
+				plist -> callback_time = currTime;                                /* qiao: rememter the time starting callback */
+				fGetDateStr(datetime);
 			}
 
 			/* find and record worst status */
@@ -739,10 +885,10 @@ STATIC int save_restore(void)
 				SR_status = plist->status;
 				strcpy(SR_statusStr, plist->statusStr);
 			}
-			if (SR_rebootStatus < SR_status) {
+			/*if (SR_rebootStatus < SR_status) {
 				SR_status = SR_rebootStatus;
 				strcpy(SR_statusStr, SR_rebootStatusStr);
-			}
+			}*/           /* qiao: disable this part, because sometimes the system recovers during runtime though some errors during reboot */
 
 			/* next list */
 			plist = plist->pnext;
@@ -754,7 +900,7 @@ STATIC int save_restore(void)
 		/* report status */
 		SR_heartbeat = (SR_heartbeat+1) % 2;
 		TRY_TO_PUT(DBR_LONG, SR_status_chid, &SR_status);
-		TRY_TO_PUT(DBR_LONG, SR_heartbeat_chid, &SR_heartbeat);
+		TRY_TO_PUT(DBR_SHORT, SR_heartbeat_chid, &SR_heartbeat);    /* qiao: use short data type for heart beat */
 		TRY_TO_PUT(DBR_STRING, SR_statusStr_chid, &SR_statusStr);
 		SR_recentlyStr[(STRING_LEN-1)] = '\0';
 		TRY_TO_PUT(DBR_STRING, SR_recentlyStr_chid, &SR_recentlyStr);
@@ -830,13 +976,16 @@ STATIC int save_restore(void)
 
 		/* go to sleep for a while */
 		ca_pend_event((double)min_delay);
-    }
+	}
+
+	/* before exit, clear all CA channels */
+	ca_disconnect();
 
 	/* We're never going to exit */
 	return(OK);
 }
-	
 
+    
 /*
  * connect all of the channels in a save set
  *
@@ -844,75 +993,123 @@ STATIC int save_restore(void)
  */
 STATIC int connect_list(struct chlist *plist)
 {
-	struct channel	*pchan;
+	struct channel	*pchannel;
 	int				n, m;
 	long			status, field_size;
 
 	/* connect all channels in the list */
-	for (pchan = plist->pchan_list, n=0; pchan != 0; pchan = pchan->pnext) {
+	for (pchannel = plist->pchan_list, n=0; pchannel != 0; pchannel = pchannel->pnext) {
 		if (save_restoreDebug >= 10)
-			errlogPrintf("save_restore:connect_list: channel '%s'\n", pchan->name);
-		if (ca_search(pchan->name,&pchan->chid) == ECA_NORMAL) {
-			strcpy(pchan->value,"Search Issued");
-			n++;
-		} else {
-			strcpy(pchan->value,"Search Failed");
+			errlogPrintf("save_restore:connect_list: channel '%s'\n", pchannel->name);	
+			
+		if(!pchannel -> channel_connected) {	                              /* qiao: only try to connect to the channel not connected */
+		
+			/* printf("The chid of %s is %p\n", pchannel->name, pchannel->chid); */
+			
+			if (pchannel->chid) ca_clear_channel(pchannel->chid);         /* qiao: release the channel, avoid duplicate resource allocation */
+			
+			if (ca_create_channel(pchannel->name, 
+		        	              ca_connection_callback, 
+					      (void *)pchannel, 
+				    	      CA_PRIORITY_DEFAULT, 
+					      &pchannel->chid) == ECA_NORMAL) {       /* qiao: use ca_create_channel instead of ca_search here */
+				strcpy(pchannel->value,"Search Issued");
+				pchannel -> just_created = 1;                         /* qiao: the channel is just created */
+				n++;
+			} else {
+				strcpy(pchannel->value,"Search Failed");
+			}			
 		}
 	}
 	if (ca_pend_io(MAX(5.0, n * 0.01)) == ECA_TIMEOUT) {
 		errlogPrintf("save_restore:connect_list: not all searches successful\n");
 	}
 
-	for (pchan = plist->pchan_list, n=m=0; pchan != 0; pchan = pchan->pnext, m++) {
-		if (pchan->chid) {
-			if (ca_state(pchan->chid) == cs_conn) {
-				strcpy(pchan->value,"Connected");
-				n++;
-			} else {
-				errlogPrintf("save_restore: connect failed for channel '%s'\n", pchan->name);
-			}
- 		}
+	for (pchannel = plist->pchan_list, n=m=0; pchannel != 0; pchannel = pchannel->pnext) {
+		if(pchannel -> just_created) {                                        /* qiao: only check the element of juct created channel */
+			pchannel -> just_created = 0;      
+			m++;                                                          /* qiao: channel number of newly created */
+			
+			if (pchannel->chid) {
+				if (ca_state(pchannel->chid) == cs_conn) {
+					strcpy(pchannel->value,"Connected");
+					n++;
+				} else {
+					errlogPrintf("save_restore: connect failed for channel '%s'\n", pchannel->name);
+				}
+ 			}
 
-		pchan->max_elements = ca_element_count(pchan->chid);	/* just to see if it's an array */
-		pchan->curr_elements = pchan->max_elements;				/* begin with this assumption */
-		if (save_restoreDebug >= 10)
-			errlogPrintf("save_restore:connect_list: '%s' has, at most, %ld elements\n",
-				pchan->name, pchan->max_elements);
-		if (pchan->max_elements > 1) {
-			/* We use database access for arrays, so get that info */
-			status = SR_get_array_info(pchan->name, &pchan->max_elements, &field_size, &pchan->field_type);
-			/* info resulting from dbNameToAddr() might be different, but it's still not the actual element count */
-			pchan->curr_elements = pchan->max_elements;
+			pchannel->max_elements = ca_element_count(pchannel->chid);	/* just to see if it's an array */
+			pchannel->curr_elements = pchannel->max_elements;				/* begin with this assumption */
 			if (save_restoreDebug >= 10)
-				errlogPrintf("save_restore:connect_list:(after SR_get_array_info) '%s' has, at most, %ld elements\n",
-					pchan->name, pchan->max_elements);
-			if (status == 0)
-				pchan->pArray = calloc(pchan->max_elements, field_size);
-			if (pchan->pArray == NULL) {
-				errlogPrintf("save_restore:connect_list: can't alloc array for '%s'\n", pchan->name);
-				pchan->max_elements = 0;
-				pchan->curr_elements = 0;
+				errlogPrintf("save_restore:connect_list: '%s' has, at most, %ld elements\n",
+					pchannel->name, pchannel->max_elements);
+			if (pchannel->max_elements > 1) {
+				/* We use database access for arrays, so get that info */
+				status = SR_get_array_info(pchannel->name, &pchannel->max_elements, &field_size, &pchannel->field_type);
+				if (status) {
+					pchannel->curr_elements = pchannel->max_elements = -1;
+					errlogPrintf("save_restore:connect_list: array PV '%s' is not local.\n", pchannel->name);
+				} else {
+					/* info resulting from dbNameToAddr() might be different, but it's still not the actual element count */
+					pchannel->curr_elements = pchannel->max_elements;
+					if (save_restoreDebug >= 10)
+						errlogPrintf("save_restore:connect_list:(after SR_get_array_info) '%s' has, at most, %ld elements\n",
+							pchannel->name, pchannel->max_elements);
+					pchannel->pArray = calloc(pchannel->max_elements, field_size);
+					if (pchannel->pArray == NULL) {
+						errlogPrintf("save_restore:connect_list: can't alloc array for '%s'\n", pchannel->name);
+						pchannel->curr_elements = pchannel->max_elements = -1;
+					}
+				}			
 			}
 		}
 	}
 	sprintf(SR_recentlyStr, "%s: %d of %d PV's connected", plist->save_file, n, m);
-
-	/* Connect to savePathPV and saveNamePV, if they are defined */
-	if (plist->savePathPV[0] || plist->saveNamePV[0]) {
-		if (plist->savePathPV[0]) {
-			TATTLE(ca_search(plist->savePathPV,&plist->savePathPV_chid), "save_restore: ca_search(%s) returned %s", plist->savePathPV);
-		}
-		if (plist->saveNamePV[0]) {
-			TATTLE(ca_search(plist->saveNamePV,&plist->saveNamePV_chid), "save_restore: ca_search(%s) returned %s", plist->saveNamePV);
-		}
-		if (ca_pend_io(0.5)!=ECA_NORMAL) {
-			errlogPrintf("save_restore: Can't connect to list-specific path/name PV(s)\n");
-		}
-	}
-
+	errlogPrintf(SR_recentlyStr);
+	
 	return(get_channel_values(plist));
 }
 
+/**
+ * qiao: disconnect all CA channels used in this module. This routine is called when terminating the main thread
+ */
+STATIC void ca_disconnect()
+{
+	struct chlist  *plist    = NULL;
+	struct channel *pchannel = NULL;
+    
+	/* disconnect all channels in the data set */
+	plist = lptr;
+    
+	while (plist != 0) {
+		/* disconnect all channels in the data list */
+		for (pchannel = plist -> pchan_list; pchannel != 0; pchannel = pchannel -> pnext)
+			if (pchannel->chid) ca_clear_channel(pchannel->chid);       
+        
+		/* disconnect the data list specific PVs */
+		if(plist->savePathPV_chid) ca_clear_channel(plist->savePathPV_chid);
+		if(plist->saveNamePV_chid) ca_clear_channel(plist->saveNamePV_chid);
+		
+		if(plist->status_chid) 		ca_clear_channel(plist->status_chid);
+		if(plist->name_chid) 		ca_clear_channel(plist->name_chid);
+		if(plist->save_state_chid) 	ca_clear_channel(plist->save_state_chid);
+		if(plist->statusStr_chid) 	ca_clear_channel(plist->statusStr_chid);
+		if(plist->time_chid) 		ca_clear_channel(plist->time_chid);
+	
+		/* next list */
+		plist = plist->pnext;			
+	}
+	
+	/* disconnect the global level channels */
+	if(SR_heartbeat_chid) 		ca_clear_channel(SR_heartbeat_chid);
+	if(SR_recentlyStr_chid) 	ca_clear_channel(SR_recentlyStr_chid);
+	if(SR_status_chid) 		ca_clear_channel(SR_status_chid);
+	if(SR_statusStr_chid) 		ca_clear_channel(SR_statusStr_chid);
+	if(SR_rebootStatus_chid) 	ca_clear_channel(SR_rebootStatus_chid);
+	if(SR_rebootStatusStr_chid) 	ca_clear_channel(SR_rebootStatusStr_chid);
+	if(SR_rebootTime_chid) 		ca_clear_channel(SR_rebootTime_chid);
+}
 
 /*
  * enable new save methods
@@ -930,6 +1127,7 @@ STATIC int enable_list(struct chlist *plist)
 	if ((plist->save_method & PERIODIC) && !(plist->enabled_method & PERIODIC)) {
 		callbackRequestDelayed(&plist->periodicCb, (double)plist->period);
 		plist->enabled_method |= PERIODIC;
+		epicsTimeGetCurrent(&plist -> callback_time);
 	}
 
 	/* enable a triggered set */
@@ -974,6 +1172,7 @@ STATIC int enable_list(struct chlist *plist)
 		}
 		callbackRequestDelayed(&plist->monitorCb, (double)plist->monitor_period);
 		plist->enabled_method |= MONITORED;
+		epicsTimeGetCurrent(&plist -> callback_time);
 	}
 
 	/* enable a manual request set */
@@ -999,10 +1198,36 @@ STATIC int get_channel_values(struct chlist *plist)
 	int				not_connected = 0;
 	unsigned short	num_channels = 0;
 	short			field_type;
+	long			status, field_size;
 
 	/* attempt to fetch all channels that are connected */
 	for (pchannel = plist->pchan_list; pchannel != 0; pchannel = pchannel->pnext) {
 		pchannel->valid = 0;
+
+		/* Handle channels whose element count has not yet been determined. */
+		if (pchannel->chid && (ca_state(pchannel->chid) == cs_conn) && (pchannel->max_elements == 0)) {
+			/* Channel probably wasn't connected when connect_list() was called */
+			pchannel->max_elements = pchannel->curr_elements = ca_element_count(pchannel->chid);
+			if (pchannel->max_elements > 1) {
+				status = SR_get_array_info(pchannel->name, &pchannel->max_elements, &field_size, &pchannel->field_type);
+				if (status) {
+					pchannel->curr_elements = pchannel->max_elements = -1; /* Mark channel so we ignore it forever. */
+					errlogPrintf("save_restore:get_channel_values: array PV '%s' is not local.\n", pchannel->name);
+				} else {
+					/* info resulting from dbNameToAddr() might be different, but it's still not the actual element count */
+					pchannel->curr_elements = pchannel->max_elements;
+					if (save_restoreDebug >= 10)
+						errlogPrintf("save_restore:get_channel_values:(after SR_get_array_info) '%s' has, at most, %ld elements\n",
+							pchannel->name, pchannel->max_elements);
+					pchannel->pArray = calloc(pchannel->max_elements, field_size);
+					if (pchannel->pArray == NULL) {
+						errlogPrintf("save_restore:get_channel_values: can't alloc array for '%s'\n", pchannel->name);
+						pchannel->curr_elements = pchannel->max_elements = -1; /* Mark channel so we ignore it forever. */
+					}
+				}			
+			}
+		}
+
 		if (pchannel->chid && (ca_state(pchannel->chid) == cs_conn) && (pchannel->max_elements >= 1)) {
 			field_type = ca_field_type(pchannel->chid);
 			strcpy(pchannel->value, INIT_STRING);
@@ -1033,10 +1258,14 @@ STATIC int get_channel_values(struct chlist *plist)
 				if (save_restoreDebug >= 1) errlogPrintf("save_restore:get_channel_values: no CHID for '%s'\n", pchannel->name);
 			} else if (ca_state(pchannel->chid) != cs_conn) {
 				if (save_restoreDebug >= 1) errlogPrintf("save_restore:get_channel_values: %s not connected\n", pchannel->name);
-			} else if ((pchannel->max_elements < 1)) {
-				if (save_restoreDebug >= 1) errlogPrintf("save_restore:get_channel_values: %s has, at most, %ld elements\n",
-					pchannel->name, pchannel->max_elements);
+			} else if ((pchannel->max_elements == 0)) {
+				if (save_restoreDebug >= 1) errlogPrintf("save_restore:get_channel_values: %s has an undetermined # elements\n",
+					pchannel->name);
+			} else if ((pchannel->max_elements == -1)) {
+				if (save_restoreDebug >= 1) errlogPrintf("save_restore:get_channel_values: %s has a serious problem\n",
+					pchannel->name);
 			}
+
 		}
 	}
 	if (ca_pend_io(MIN(10.0, .1*num_channels)) != ECA_NORMAL) {
@@ -1062,6 +1291,30 @@ STATIC int get_channel_values(struct chlist *plist)
 	return(not_connected);
 }
 
+/* state of a backup restore file */
+#define BS_NONE 	0	/* Couldn't open the file */
+#define BS_BAD		1	/* File exists but looks corrupted */
+#define BS_OK		2	/* File is good */
+#define BS_NEW		3	/* Just wrote the file */
+
+STATIC int check_file(char *file)
+{
+	FILE *fd;
+	char tmpstr[20];
+	int	 file_state = BS_NONE;
+
+	if ((fd = fopen(file, "r")) != NULL) {
+		if ((fseek(fd, -6, SEEK_END)) ||
+			(fgets(tmpstr, 6, fd) == 0) ||
+			(strncmp(tmpstr, "<END>", 5) != 0)) {
+			file_state = BS_BAD;
+		} else file_state = BS_OK;
+			
+		fclose(fd);
+	}
+	return(file_state);
+}
+
 /*
  * Actually write the file
  *
@@ -1077,6 +1330,7 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	struct channel	*pchannel;
 	int 			n, problem = 0;
 	char			datetime[32];
+	struct stat		fileStat;		/* qiao: file state */
 	
 	fGetDateStr(datetime);
 
@@ -1236,6 +1490,15 @@ STATIC int write_it(char *filename, struct chlist *plist)
 		filedes = -1;
 	}
 #endif
+
+	/* qiao: check the file state: the file contents, file size and the save time of the file */
+	stat(filename, &fileStat);
+	
+	if((check_file(filename) != BS_OK) || (fileStat.st_size <= 0) || (difftime(time(NULL), fileStat.st_mtime) > 10.0)) {
+		errlogPrintf("save_restore:write_it: file written checking failure [%s]\n", datetime);
+		return(ERROR);
+	}	
+	
 	return(OK);
 
 trouble:
@@ -1261,32 +1524,6 @@ trouble:
 #endif
 	return(problem ? ERROR : OK);
 }
-
-
-/* state of a backup restore file */
-#define BS_NONE 	0	/* Couldn't open the file */
-#define BS_BAD		1	/* File exists but looks corrupted */
-#define BS_OK		2	/* File is good */
-#define BS_NEW		3	/* Just wrote the file */
-
-STATIC int check_file(char *file)
-{
-	FILE *fd;
-	char tmpstr[20];
-	int	 file_state = BS_NONE;
-
-	if ((fd = fopen(file, "r")) != NULL) {
-		if ((fseek(fd, -6, SEEK_END)) ||
-			(fgets(tmpstr, 6, fd) == 0) ||
-			(strncmp(tmpstr, "<END>", 5) != 0)) {
-				file_state = BS_BAD;
-		}
-		fclose(fd);
-		file_state = BS_OK;
-	}
-	return(file_state);
-}
-
 
 /*
  * save_file - save routine
@@ -1391,7 +1628,7 @@ STATIC int write_save_file(struct chlist *plist)
 				errlogPrintf("save_restore:write_save_file - Couldn't make backup '%s' [%s]\n",
 					backup_file, datetime);
 				plist->status = SR_STATUS_WARN;
-				strcpy(plist->statusStr, "Can't write .savB file");
+				strcpy(plist->statusStr, "Can't copy .sav to .savB file");
 				TRY_TO_PUT_AND_FLUSH(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
 				sprintf(SR_recentlyStr, "Can't write '%sB'", plist->save_file);
 				return(ERROR);
@@ -1688,6 +1925,9 @@ STATIC int create_data_set(
 	/* future: associate the list with a set of status PV's */
 	plist->listNumber = listNumber++;
 
+	/* qiao: init the call back time of this list */
+	epicsTimeGetCurrent(&plist -> callback_time);	
+
 	/* link it to the save set list */
 	while (waitForListLock(5) == 0) {
 		if (save_restoreDebug) errlogPrintf("create_data_set: '%s' waiting for listLock()\n", filename);
@@ -1706,6 +1946,7 @@ STATIC int create_data_set(
  * save_restoreShow -  Show state of save_restore; optionally, list save sets
  *
  */
+static char ca_state_string[4][10] = {"Never", "Prev", "Conn", "Closed"};
 void save_restoreShow(int verbose)
 {
 	struct chlist	*plist;
@@ -1773,8 +2014,12 @@ void save_restoreShow(int verbose)
 				(plist->not_connected == 1) ? ' ' : 's');
 			if (verbose) {
 				for (pchannel = plist->pchan_list; pchannel != 0; pchannel = pchannel->pnext) {
-					printf("\t%s (max:%ld curr:%ld elements)\t%s", pchannel->name,
+					printf("\t%s chid:%p state:%s (max:%ld curr:%ld elements)\t%s", pchannel->name,
+						pchannel->chid, pchannel->chid?ca_state_string[ca_state(pchannel->chid)]:"noChid",
 						pchannel->max_elements, pchannel->curr_elements, pchannel->value);
+						
+					printf("   channel_connected = %d", pchannel->channel_connected);    /* qiao: some test print out */
+						
 					if (pchannel->enum_val >= 0) printf("\t%d\n",pchannel->enum_val);
 					else printf("\n");
 				}
@@ -1848,7 +2093,7 @@ int set_savefile_path(char *path, char *pathsub)
 	char fullpath[PATH_SIZE+1] = "";
 	int path_len=0, pathsub_len=0;
 
-	if (save_restoreNFSOK) dismountFileSystem();
+	if (save_restoreNFSOK) dismountFileSystem(save_restoreNFSMntPoint);   /* aqiao: use new dismount routine */
 
 	if (path && *path) path_len = strlen(path);
 	if (pathsub && *pathsub) pathsub_len = strlen(pathsub);
@@ -1874,7 +2119,9 @@ int set_savefile_path(char *path, char *pathsub)
 		if (saveRestoreFilePath[strlen(saveRestoreFilePath)-1] != '/') {
 			strcat(saveRestoreFilePath, "/");
 		}
-		if (save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0]) mountFileSystem();
+		if (save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0]) 
+			/* aqiao: use new mount routine */
+			mountFileSystem(save_restoreNFSHostName, save_restoreNFSHostAddr, save_restoreNFSMntPoint);
 		return(OK);
 	} else {
 		return(ERROR);
@@ -2335,6 +2582,8 @@ STATIC int readReqFile(const char *reqFile, struct chlist *plist, char *macrostr
 				pchannel->enum_val = -1;
 				pchannel->max_elements = 0;
 				pchannel->curr_elements = 0;
+				pchannel->channel_connected=0;          /* qiao: init the channel connection flag 0 */
+				pchannel->just_created=0;               /* qiao: init the just created flag 0 */
 			}
 		}
 	}
@@ -2454,12 +2703,15 @@ IOCSH_ARG_ARRAY set_saveTask_priority_Args[1] = {&set_saveTask_priority_Arg0};
 IOCSH_FUNCDEF   set_saveTask_priority_FuncDef = {"set_saveTask_priority",1,set_saveTask_priority_Args};
 static void     set_saveTask_priority_CallFunc(const iocshArgBuf *args) {set_saveTask_priority(args[0].ival);}
 	
-/* void save_restoreSet_NFSHost(char *hostname, char *address); */
+/* aqiao: void save_restoreSet_NFSHost(char *hostname, char *address, char *mntpoint); */
 IOCSH_ARG       save_restoreSet_NFSHost_Arg0    = {"hostname",iocshArgString};
-IOCSH_ARG       save_restoreSet_NFSHost_Arg1    = {"address",iocshArgString};
-IOCSH_ARG_ARRAY save_restoreSet_NFSHost_Args[2] = {&save_restoreSet_NFSHost_Arg0,&save_restoreSet_NFSHost_Arg1};
-IOCSH_FUNCDEF   save_restoreSet_NFSHost_FuncDef = {"save_restoreSet_NFSHost",2,save_restoreSet_NFSHost_Args};
-static void     save_restoreSet_NFSHost_CallFunc(const iocshArgBuf *args) {save_restoreSet_NFSHost(args[0].sval,args[1].sval);}
+IOCSH_ARG       save_restoreSet_NFSHost_Arg1    = {"address", iocshArgString};
+IOCSH_ARG       save_restoreSet_NFSHost_Arg2    = {"mntpoint",iocshArgString};
+IOCSH_ARG_ARRAY save_restoreSet_NFSHost_Args[3] = {&save_restoreSet_NFSHost_Arg0,
+                                                   &save_restoreSet_NFSHost_Arg1,
+                                                   &save_restoreSet_NFSHost_Arg2};
+IOCSH_FUNCDEF   save_restoreSet_NFSHost_FuncDef = {"save_restoreSet_NFSHost",3,save_restoreSet_NFSHost_Args};
+static void     save_restoreSet_NFSHost_CallFunc(const iocshArgBuf *args) {save_restoreSet_NFSHost(args[0].sval,args[1].sval,args[2].sval);}
 	
 /* int remove_data_set(char *filename); */
 IOCSH_ARG       remove_data_set_Arg0    = {"filename",iocshArgString};
@@ -2561,6 +2813,18 @@ IOCSH_ARG_ARRAY save_restoreSet_UseStatusPVs_Args[1] = {&save_restoreSet_UseStat
 IOCSH_FUNCDEF   save_restoreSet_UseStatusPVs_FuncDef = {"save_restoreSet_UseStatusPVs",1,save_restoreSet_UseStatusPVs_Args};
 static void     save_restoreSet_UseStatusPVs_CallFunc(const iocshArgBuf *args) {save_restoreSet_UseStatusPVs(args[0].ival);}
 
+/* qiao: void save_restoreSet_CAReconnect(int ok); */
+IOCSH_ARG       save_restoreSet_CAReconnect_Arg0    = {"ok",iocshArgInt};
+IOCSH_ARG_ARRAY save_restoreSet_CAReconnect_Args[1] = {&save_restoreSet_CAReconnect_Arg0};
+IOCSH_FUNCDEF   save_restoreSet_CAReconnect_FuncDef = {"save_restoreSet_CAReconnect",1,save_restoreSet_CAReconnect_Args};
+static void     save_restoreSet_CAReconnect_CallFunc(const iocshArgBuf *args) {save_restoreSet_CAReconnect(args[0].ival);}
+
+/* qiao: void save_restoreSet_CallbackTimeout(int t); */
+IOCSH_ARG       save_restoreSet_CallbackTimeout_Arg0    = {"t",iocshArgInt};
+IOCSH_ARG_ARRAY save_restoreSet_CallbackTimeout_Args[1] = {&save_restoreSet_CallbackTimeout_Arg0};
+IOCSH_FUNCDEF   save_restoreSet_CallbackTimeout_FuncDef = {"save_restoreSet_CallbackTimeout",1,save_restoreSet_CallbackTimeout_Args};
+static void     save_restoreSet_CallbackTimeout_CallFunc(const iocshArgBuf *args) {save_restoreSet_CallbackTimeout(args[0].ival);}
+
 void save_restoreRegister(void)
 {
     iocshRegister(&fdbrestore_FuncDef, fdbrestore_CallFunc);
@@ -2593,6 +2857,8 @@ void save_restoreRegister(void)
 #endif
     iocshRegister(&save_restoreSet_RetrySeconds_FuncDef, save_restoreSet_RetrySeconds_CallFunc);
     iocshRegister(&save_restoreSet_UseStatusPVs_FuncDef, save_restoreSet_UseStatusPVs_CallFunc);
+    iocshRegister(&save_restoreSet_CAReconnect_FuncDef,  save_restoreSet_CAReconnect_CallFunc);                   /* qiao: register new iocsh function */
+    iocshRegister(&save_restoreSet_CallbackTimeout_FuncDef,  save_restoreSet_CallbackTimeout_CallFunc);           /* qiao: register new iocsh function */
 }
 
 epicsExportRegistrar(save_restoreRegister);
