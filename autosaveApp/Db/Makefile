@@ -16,6 +16,16 @@ DB += SR_array_test.db
 DB += SR_test.db
 
 #----------------------------------------------------
+# Create and install (or just install)
+# Archive request files, templates, substitutions like this
+# ARCHIVE += <file>.archive
+# ARCHIVE += <file>.substitutions
+# ARCHIVE += <file>.template
+#
+ARCHIVE += archive_SR.substitutions
+ARCHIVE += archive_SR.template
+
+#----------------------------------------------------
 # If <anyname>.db template is not named <anyname>*.template add
 # <anyname>_template = <templatename>
 
