@@ -60,9 +60,13 @@ int dismountFileSystem(char *mntpoint)
     if (!mntpoint || !mntpoint[0]) return NFS_INVALID_MNTPOINT;
 
     /* unmount the file system */
-    save_restoreNFSOK = 0;
-    if (nfsUnmount(mntpoint) == OK) return NFS_SUCCESS;
-    else return NFS_FAILURE;
+    
+    if (nfsUnmount(mntpoint) == OK) {
+        save_restoreNFSOK = 0;
+        return NFS_SUCCESS;
+    } else {
+        return NFS_FAILURE;
+    }
 }
 
 

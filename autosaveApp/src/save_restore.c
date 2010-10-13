@@ -571,23 +571,23 @@ void save_restoreSet_NFSHost(char *hostname, char *address, char *mntpoint)
     char datetime[32];
     fGetDateStr(datetime);
 
-    /* unmount NFS first if already mounted */
-    if (save_restoreNFSOK) {
-        dismountFileSystem(mntpoint);
-
-        errlogPrintf("save_restore:dismountFileSystem:dismounted '%s' [%s]\n", mntpoint, datetime);
-        strncpy(SR_recentlyStr, "nfsUnmount", (STRING_LEN-1));
-    }
-
     /* get the settings */
     strcpy(save_restoreNFSHostName, hostname);
     strcpy(save_restoreNFSHostAddr, address);
     strcpy(save_restoreNFSMntPoint, mntpoint);
 
+    save_restoreIoErrors = 0;
+
+    /* unmount NFS first if already mounted */
+    if (save_restoreNFSOK) {
+        if(dismountFileSystem(mntpoint) == 0) {
+            errlogPrintf("save_restore:dismountFileSystem:dismounted '%s' [%s]\n", mntpoint, datetime);
+            strncpy(SR_recentlyStr, "nfsUnmount", (STRING_LEN-1));
+        } else return;
+    }
+
     /* mount the file system */
     if (mountFileSystem(hostname, address, mntpoint) == NFS_SUCCESS) {
-        save_restoreIoErrors = 0;
-
         errlogPrintf("save_restore:mountFileSystem:successfully mounted '%s'\n", mntpoint);
         strncpy(SR_recentlyStr, "nfsMount succeeded", (STRING_LEN-1));
     }
@@ -751,21 +751,23 @@ STATIC int save_restore(void)
 		if (save_restoreNFSOK == 0) {
 			/* NFS problem: Try, every 60 seconds, to remount */
 			if (epicsTimeDiffInSeconds(&currTime, &remount_check_time) > 60.) {
-				remount_check_time = currTime;                           /* struct copy */
-				dismountFileSystem(save_restoreNFSMntPoint);             /* first dismount it */
+				remount_check_time = currTime;                           	/* struct copy */
+				
+				if(dismountFileSystem(save_restoreNFSMntPoint) == 0) {          /* first dismount it */
 
-				if (mountFileSystem(save_restoreNFSHostName, 
-					    	save_restoreNFSHostAddr, 
-					    	save_restoreNFSMntPoint) == NFS_SUCCESS) {
-					just_remounted = 1;                    
-					errlogPrintf("save_restore: %s remounted \n", save_restoreNFSMntPoint);
-					SR_status = SR_STATUS_OK;
-					strcpy(SR_statusStr, "NFS remounted");
-				} else {
-					errlogPrintf("save_restore: failed to remount %s \n", save_restoreNFSMntPoint);
-					SR_status = SR_STATUS_FAIL;
-					strcpy(SR_statusStr, "NFS failed!");
- 				}
+					if (mountFileSystem(save_restoreNFSHostName, 
+						    	save_restoreNFSHostAddr, 
+					    		save_restoreNFSMntPoint) == NFS_SUCCESS) {
+						just_remounted = 1;                    
+						errlogPrintf("save_restore: %s remounted \n", save_restoreNFSMntPoint);
+						SR_status = SR_STATUS_OK;
+						strcpy(SR_statusStr, "NFS remounted");
+					} else {
+						errlogPrintf("save_restore: failed to remount %s \n", save_restoreNFSMntPoint);
+						SR_status = SR_STATUS_FAIL;
+						strcpy(SR_statusStr, "NFS failed!");
+ 					}
+				}
 			}
         	}
 
@@ -824,7 +826,9 @@ STATIC int save_restore(void)
 			if((plist->save_method & PERIODIC) || (plist->save_method & MONITORED) == MONITORED) {
 				if(epicsTimeDiffInSeconds(&currTime, &plist -> callback_time) > save_restoreCallbackTimeout) {
 			    		plist->save_state = plist->save_method;
-			    		errlogPrintf("Callback time out!\n");
+					
+					if (save_restoreDebug >= 1)
+			    			errlogPrintf("save_restore: Callback time out of %s, force to save!\n", plist->reqFile);
 				}	
 			}
 
@@ -1498,6 +1502,11 @@ STATIC int write_it(char *filename, struct chlist *plist)
 		errlogPrintf("save_restore:write_it: file written checking failure [%s]\n", datetime);
 		return(ERROR);
 	}	
+	
+	/* aqiao: up to now, the file is successfully saved, which means the NFS is OK. So here clean up
+	          the error flag for NFS, corresponding to the auto-recover of NFS */
+	save_restoreNFSOK    = 1;
+	save_restoreIoErrors = 0;
 	
 	return(OK);
 
