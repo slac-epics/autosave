@@ -16,6 +16,12 @@
 #
 #==============================================================
 #
+autosave-beta2:        * Added the exception handling for empty NFS host settings
+                         - if the user did not set the NFS host name and mounting point,
+                           disable the NFS remounting functionality
+                         - if the NFS access automatically recovered, stop trying to remount NFS
+                       * Fixed the bug of wrongly displayed message of "Call back time out"
+
 autosave-beta1:        * Synch with autosave R4-7
                        * Introduced NFS remount function for RTEMS in case of too many
                          file written failures
