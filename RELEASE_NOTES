@@ -16,6 +16,9 @@
 #
 #==============================================================
 #
+autosave-beta3:        * Fix the bug of waveform restore when the array end mark of "}" is exactly
+                         the 120th character of the string in the .sav file
+
 autosave-beta2:        * Added the exception handling for empty NFS host settings
                          - if the user did not set the NFS host name and mounting point,
                            disable the NFS remounting functionality

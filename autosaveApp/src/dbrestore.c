@@ -391,7 +391,8 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string)
 	unsigned long	*p_ulong = NULL;
 	float			*p_float = NULL;
 	double			*p_double = NULL;
-
+	
+	int 			newDataRead = 0;	/* qiao: indicate new data has been read */ 
 
 	if (save_restoreDebug >= 1) {
 		errlogPrintf("dbrestore:SR_array_restore:entry: PV = '%s'\n", PVname);
@@ -435,20 +436,27 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string)
 			status = -1;
 			break;
 		}
+		
+		
 		/** read array values **/
 		if (save_restoreDebug >= 11) {
 			errlogPrintf("dbrestore:SR_array_restore: parsing buffer '%s'\n", value_string);
 		}
+		
+		
 		if ((bp = strchr(value_string, (int)ARRAY_BEGIN)) != NULL) {
 			begin_mark_found = 1;
 			if (save_restoreDebug >= 10) {
 				errlogPrintf("dbrestore:SR_array_restore: parsing array buffer '%s'\n", bp);
 			}
+			
+			
 			for (num_read=0; (num_read<max_elements) && bp && !end_mark_found; ) {
 				/* Find beginning of array element */
 				if (save_restoreDebug >= 10) {
 					errlogPrintf("dbrestore:SR_array_restore: looking for element[%ld] \n", num_read);
 				}
+				
 				while ((*bp != ELEMENT_BEGIN) && !end_mark_found && !end_of_file) {
 					if (save_restoreDebug >= 12) {
 						errlogPrintf("dbrestore:SR_array_restore: ...buffer contains '%s'\n", bp);
@@ -456,6 +464,7 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string)
 					switch (*bp) {
 					case '\0':
 						if ((bp = fgets(buffer, BUF_SIZE, inp_fd)) == NULL) {
+						
 							errlogPrintf("save_restore: *** EOF during array-parse\n");
 							end_of_file = 1;
 						}
@@ -468,6 +477,7 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string)
 						break;
 					}
 				}
+				
 				/*
 				 * Read one element: Accumulate characters of element value into string[],
 				 * ignoring any nonzero control characters, and append the value to the local array.
@@ -480,10 +490,11 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string)
 					for (bp++, j=0; (j < MAX_STRING_SIZE-1) && (*bp != ELEMENT_END); bp++) {
 						if (*bp == '\0') {
 							if ((bp = fgets(buffer, BUF_SIZE, inp_fd)) == NULL) {
+							
 								errlogPrintf("save_restore:array_restore: *** premature EOF.\n");
 								end_of_file = 1;
 								break;
-							}
+							}							
 							if (save_restoreDebug >= 11) {
 								errlogPrintf("dbrestore:SR_array_restore: new buffer: '%s'\n", bp);
 							}
@@ -516,7 +527,7 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string)
 							if ((bp = fgets(buffer, BUF_SIZE, inp_fd)) == NULL) {
 								end_of_file = 1;
 								found = 1;
-							}
+							}							
 						}
 					}
 					/* Append value to local array. */
@@ -594,6 +605,12 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string)
 	/* leave the file pointer ready for next PV (next fgets() should yield next PV) */
 	if (begin_mark_found) {
 		/* find ARRAY_END (but ARRAY_END inside an element is just another character) */
+		
+		/* qiao: debug
+		printf("================ Trying to recover the array PV: %s ==============\n", PVname);
+		printf("== String: %s ==\n", value_string);
+		*/
+		
 		if (save_restoreDebug >= 10) {
 			errlogPrintf("dbrestore:SR_array_restore: looking for ARRAY_END\n");
 		}
@@ -602,6 +619,9 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string)
 			if (save_restoreDebug >= 11) {
 				errlogPrintf("dbrestore:SR_array_restore: ...buffer contains '%s'\n", bp);
 			}
+			
+			newDataRead = 0;
+			
 			switch (*bp) {
 			case ESCAPE:
 				if (in_element && (bp[1] == ELEMENT_END)) bp++; /* two chars treated as one */
@@ -610,17 +630,24 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string)
 				if (!in_element) end_mark_found = 1;
 				break;
 			case '\0':
-				if ((bp = fgets(buffer, BUF_SIZE, inp_fd)) == NULL) {
+				if ((bp = fgets(buffer, BUF_SIZE, inp_fd)) == NULL) {				
 					errlogPrintf("save_restore: *** EOF during array-end search\n");
 					end_of_file = 1;
 				}
+				
+				newDataRead = 1;			/* qiao: new read has happened */
+				
+				/*printf("<<<<<<<<<<<<<< another get is :%s >>>>> \n", bp);*/
+				
 				break;
 			default:
 				/* Can't use ELEMENT_BEGIN, ELEMENT_END as cases; they might be the same. */
 				if ((*bp == ELEMENT_BEGIN) || (*bp == ELEMENT_END)) in_element = !in_element;
 				break;
 			}
-			if (bp) ++bp;
+			
+			if (bp && !newDataRead) ++bp;			/* qiao: when new data read, ++bp will skip the first chars! */			
+
 		}
 	} else {
 		if (save_restoreDebug >= 10) {
@@ -802,7 +829,7 @@ int reboot_restore(char *filename, initHookState init_state)
 			if (found_field) {
 				if (is_scalar) {
 					status = scalar_restore(pass, pdbentry, PVname, value_string);
-				} else {
+				} else {				
 					status = SR_array_restore(pass, inp_fd, PVname, value_string);
 				}
 				if (status) {
