@@ -131,25 +131,6 @@
  */
 #define		SRVERSION "save/restore V5.5"
 
-/* qiao: Moved to osd code */
-/* #ifdef vxWorks
-#include	<vxWorks.h>
-#include	<hostLib.h>
-#include	<stdioLib.h> */
-
-/* nfsDrv.h was renamed nfsDriver.h in Tornado 2.2.2 */
-/* #include	<nfsDrv.h> */
-/* extern STATUS nfsMount(char *host, char *fileSystem, char *localName);
-extern STATUS nfsUnmount(char *localName);
-
-#include	<ioLib.h>
-extern int logMsg(char *fmt, ...);
-#else
-#define OK 0
-#define ERROR -1
-#define logMsg errlogPrintf
-#endif */
-
 #include	<stdio.h>
 #include	<errno.h>
 #include	<stdlib.h>
@@ -184,7 +165,6 @@ extern int logMsg(char *fmt, ...);
 #if SET_FILE_PERMISSIONS
 #include "sys/types.h"
 #include "fcntl.h"
-/* common file_permissions = S_IRUSR S_IWUSR S_IRGRP S_IWGRP S_IROTH S_IWOTH */
 mode_t file_permissions = (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
 #endif
 
@@ -341,7 +321,6 @@ epicsExportAddress(int, save_restoreCallbackTimeout);    /* qiao: export the new
 /* variables for managing NFS mount */
 char save_restoreNFSHostName[NFS_PATH_LEN]  = "";        /* qiao: host name of NFS server */
 char save_restoreNFSHostAddr[NFS_PATH_LEN]  = "";        /* qiao: absolute path on NFS server */
-char save_restoreNFSMntPoint[NFS_PATH_LEN]  = "";        /* qiao: local path for mount point */
 volatile int save_restoreRemountThreshold   = 10;
 epicsExportAddress(int, save_restoreRemountThreshold);
 
@@ -351,8 +330,6 @@ STATIC int	min_delay	= 1;	/* check need to save every 1 second */
 				/* worst case wait can be min_period + min_delay */
 
 /*** private functions ***/
-/* STATIC int mountFileSystem(void);
-STATIC void dismountFileSystem(void); */                 /* qiao: realized in osd code */
 STATIC void periodic_save(CALLBACK *pcallback);
 STATIC void triggered_save(struct event_handler_args);
 STATIC void on_change_timer(CALLBACK *pcallback);
@@ -566,7 +543,7 @@ STATIC void ca_connection_callback(struct connection_handler_args args)
 }
 
 /*** qiao: functions to manage NFS mount ***/
-void save_restoreSet_NFSHost(char *hostname, char *address, char *mntpoint) 
+void save_restoreSet_NFSHost(char *hostname, char *address) 
 {
     char datetime[32];
     fGetDateStr(datetime);
@@ -574,72 +551,29 @@ void save_restoreSet_NFSHost(char *hostname, char *address, char *mntpoint)
     /* get the settings */
     strcpy(save_restoreNFSHostName, hostname);
     strcpy(save_restoreNFSHostAddr, address);
-    strcpy(save_restoreNFSMntPoint, mntpoint);
 
     save_restoreIoErrors = 0;
 
-    /* unmount NFS first if already mounted */
-    if (save_restoreNFSOK) {
-        if(dismountFileSystem(mntpoint) == 0) {
-            errlogPrintf("save_restore:dismountFileSystem:dismounted '%s' [%s]\n", mntpoint, datetime);
-            strncpy(SR_recentlyStr, "nfsUnmount", (STRING_LEN-1));
-        } else return;
+    if(save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0] && saveRestoreFilePath[0]) {
+        /* check the host */
+        checkHost(hostname, address);
+
+        /* unmount NFS first if already mounted */
+        if (save_restoreNFSOK) {
+            if(dismountFileSystem(saveRestoreFilePath) == 0) {
+                errlogPrintf("save_restore:dismountFileSystem:dismounted '%s' [%s]\n", saveRestoreFilePath, datetime);
+                strncpy(SR_recentlyStr, "nfsUnmount", (STRING_LEN-1));
+            } else return;
+        }
+
+        /* mount the file system */
+        if (mountFileSystem(hostname, saveRestoreFilePath, saveRestoreFilePath) == NFS_SUCCESS) {
+            errlogPrintf("save_restore:mountFileSystem:successfully mounted '%s'\n", saveRestoreFilePath);
+            strncpy(SR_recentlyStr, "nfsMount succeeded", (STRING_LEN-1));
+        }
+        else errlogPrintf("save_restore: Can't nfsMount '%s'\n", saveRestoreFilePath);
     }
-
-    /* mount the file system */
-    if (mountFileSystem(hostname, address, mntpoint) == NFS_SUCCESS) {
-        errlogPrintf("save_restore:mountFileSystem:successfully mounted '%s'\n", mntpoint);
-        strncpy(SR_recentlyStr, "nfsMount succeeded", (STRING_LEN-1));
-    }
-    else errlogPrintf("save_restore: Can't nfsMount '%s'\n", mntpoint);
 }
-
-/* qiao: move to os dependent code */
-/* STATIC int mountFileSystem()
-{
-	char	datetime[32];
-
-	fGetDateStr(datetime);
-	errlogPrintf("save_restore:mountFileSystem:entry [%s]\n", datetime);
-	strncpy(SR_recentlyStr, "nfsMount failed", (STRING_LEN-1));
-	
-#ifdef vxWorks
-	if (save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0] && saveRestoreFilePath[0]) {
-		if (hostGetByName(save_restoreNFSHostName) == ERROR) {
-			(void)hostAdd(save_restoreNFSHostName, save_restoreNFSHostAddr);
-		}
-		if (nfsMount(save_restoreNFSHostName, saveRestoreFilePath, saveRestoreFilePath)==OK) {
-			errlogPrintf("save_restore:mountFileSystem:successfully mounted '%s'\n", saveRestoreFilePath);
-			save_restoreNFSOK = 1;
-			save_restoreIoErrors = 0;
-			strncpy(SR_recentlyStr, "nfsMount succeeded", (STRING_LEN-1));
-			return(1);
-		} else {
-			errlogPrintf("save_restore: Can't nfsMount '%s'\n", saveRestoreFilePath);
-		}
-	}
-#else
-	errlogPrintf("save_restore:mountFileSystem: not implemented for this OS.\n");
-#endif
-	return(0);
-}
-
-STATIC void dismountFileSystem()
-{
-#ifdef vxWorks
-	char	datetime[32];
-	if (save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0] && saveRestoreFilePath[0]) {
-		fGetDateStr(datetime);
-		nfsUnmount(saveRestoreFilePath);
-		errlogPrintf("save_restore:dismountFileSystem:dismounted '%s' [%s]\n",
-			saveRestoreFilePath, datetime);
-		save_restoreNFSOK = 0;
-		strncpy(SR_recentlyStr, "nfsUnmount", (STRING_LEN-1));
-	}
-#else
-	errlogPrintf("save_restore:dismountFileSystem: not implemented for this OS.\n");
-#endif
-} */
 
 /*** save_restore task ***/
 
@@ -663,14 +597,9 @@ STATIC int save_restore(void)
 
 	ca_context_create(ca_enable_preemptive_callback);
 
-	/* qiao: remount NFS for all os */
-/* #ifdef vxWorks
-	if (save_restoreNFSOK == 0) mountFileSystem();
-#endif */
-
-	/* qiao: mount the NFS if it fails */
-	if (save_restoreNFSOK == 0)
-		mountFileSystem(save_restoreNFSHostName, save_restoreNFSHostAddr, save_restoreNFSMntPoint);
+	/* qiao: mount the NFS if it is not mounted */
+	if (save_restoreNFSOK == 0 && save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0] && saveRestoreFilePath[0])
+		mountFileSystem(save_restoreNFSHostName, saveRestoreFilePath, saveRestoreFilePath);
 
 	/* Build names for save_restore general status PV's with status_prefix */
 	if (save_restoreUseStatusPVs && *status_prefix && (*SR_status_PV == '\0')) {
@@ -734,36 +663,25 @@ STATIC int save_restore(void)
 		if (do_seq_check) last_seq_check = currTime; /* struct copy */
 		
 		just_remounted = 0;
-	/* qiao: remount NFS for all os, not only for vxworks */
-/* #ifdef vxWorks
-		if ((save_restoreNFSOK == 0) && save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0]) { */
-			/* NFS problem: Try, every 60 seconds, to remount */
-			/* if (epicsTimeDiffInSeconds(&currTime, &remount_check_time) > 60.) {
-				dismountFileSystem();
-				just_remounted = mountFileSystem();
-				remount_check_time = currTime;
-			}
-		}
-#endif */
 
 		/* qiao: remount NFS if necessary. If the file written failure happens more times than defined threshold,
 		 * we will assume the NFS need to be remounted */
-		if (save_restoreNFSOK == 0) {
+		if (save_restoreNFSOK == 0 && save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0] && saveRestoreFilePath[0]) {
 			/* NFS problem: Try, every 60 seconds, to remount */
 			if (epicsTimeDiffInSeconds(&currTime, &remount_check_time) > 60.) {
 				remount_check_time = currTime;                           	/* struct copy */
 				
-				if(dismountFileSystem(save_restoreNFSMntPoint) == 0) {          /* first dismount it */
+				if(dismountFileSystem(saveRestoreFilePath) == 0) {          /* first dismount it */
 
 					if (mountFileSystem(save_restoreNFSHostName, 
-						    	save_restoreNFSHostAddr, 
-					    		save_restoreNFSMntPoint) == NFS_SUCCESS) {
+						    	saveRestoreFilePath, 
+					    		saveRestoreFilePath) == NFS_SUCCESS) {
 						just_remounted = 1;                    
-						errlogPrintf("save_restore: %s remounted \n", save_restoreNFSMntPoint);
+						errlogPrintf("save_restore: %s remounted \n", saveRestoreFilePath);
 						SR_status = SR_STATUS_OK;
 						strcpy(SR_statusStr, "NFS remounted");
 					} else {
-						errlogPrintf("save_restore: failed to remount %s \n", save_restoreNFSMntPoint);
+						errlogPrintf("save_restore: failed to remount %s \n", saveRestoreFilePath);
 						SR_status = SR_STATUS_FAIL;
 						strcpy(SR_statusStr, "NFS failed!");
  					}
@@ -1505,8 +1423,12 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	
 	/* aqiao: up to now, the file is successfully saved, which means the NFS is OK. So here clean up
 	          the error flag for NFS, corresponding to the auto-recover of NFS */
-	save_restoreNFSOK    = 1;
-	save_restoreIoErrors = 0;
+	if(save_restoreNFSOK == 0)
+	{
+	    errlogPrintf("save_restore:write_it: file written recovered [%s]\n", datetime);
+	    save_restoreNFSOK    = 1;
+	    save_restoreIoErrors = 0;
+	}
 	
 	return(OK);
 
@@ -1979,6 +1901,7 @@ void save_restoreShow(int verbose)
 	printf("  Number of sequence files to maintain: %d\n", save_restoreNumSeqFiles);
 	printf("  Time interval between sequence files: %d seconds\n", save_restoreSeqPeriodInSeconds);
 	printf("  Time interval between .sav-file write failure and retry: %d seconds\n", save_restoreRetrySeconds);
+	printf("  Call back timeout: %d seconds\n", save_restoreCallbackTimeout);
 	printf("  NFS host: '%s'; address:'%s'\n", save_restoreNFSHostName, save_restoreNFSHostAddr);
 	printf("  NFS mount status: %s\n",
 		save_restoreNFSOK?"Ok":NFS_managed?"Failed":"not managed by save_restore");
@@ -2102,7 +2025,8 @@ int set_savefile_path(char *path, char *pathsub)
 	char fullpath[PATH_SIZE+1] = "";
 	int path_len=0, pathsub_len=0;
 
-	if (save_restoreNFSOK) dismountFileSystem(save_restoreNFSMntPoint);   /* aqiao: use new dismount routine */
+	if (save_restoreNFSOK && save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0] && saveRestoreFilePath[0])
+	    dismountFileSystem(saveRestoreFilePath);   /* aqiao: use new dismount routine */
 
 	if (path && *path) path_len = strlen(path);
 	if (pathsub && *pathsub) pathsub_len = strlen(pathsub);
@@ -2130,7 +2054,7 @@ int set_savefile_path(char *path, char *pathsub)
 		}
 		if (save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0]) 
 			/* aqiao: use new mount routine */
-			mountFileSystem(save_restoreNFSHostName, save_restoreNFSHostAddr, save_restoreNFSMntPoint);
+			mountFileSystem(save_restoreNFSHostName, saveRestoreFilePath, saveRestoreFilePath);
 		return(OK);
 	} else {
 		return(ERROR);
@@ -2712,15 +2636,13 @@ IOCSH_ARG_ARRAY set_saveTask_priority_Args[1] = {&set_saveTask_priority_Arg0};
 IOCSH_FUNCDEF   set_saveTask_priority_FuncDef = {"set_saveTask_priority",1,set_saveTask_priority_Args};
 static void     set_saveTask_priority_CallFunc(const iocshArgBuf *args) {set_saveTask_priority(args[0].ival);}
 	
-/* aqiao: void save_restoreSet_NFSHost(char *hostname, char *address, char *mntpoint); */
+/* aqiao: void save_restoreSet_NFSHost(char *hostname, char *address); */
 IOCSH_ARG       save_restoreSet_NFSHost_Arg0    = {"hostname",iocshArgString};
 IOCSH_ARG       save_restoreSet_NFSHost_Arg1    = {"address", iocshArgString};
-IOCSH_ARG       save_restoreSet_NFSHost_Arg2    = {"mntpoint",iocshArgString};
-IOCSH_ARG_ARRAY save_restoreSet_NFSHost_Args[3] = {&save_restoreSet_NFSHost_Arg0,
-                                                   &save_restoreSet_NFSHost_Arg1,
-                                                   &save_restoreSet_NFSHost_Arg2};
-IOCSH_FUNCDEF   save_restoreSet_NFSHost_FuncDef = {"save_restoreSet_NFSHost",3,save_restoreSet_NFSHost_Args};
-static void     save_restoreSet_NFSHost_CallFunc(const iocshArgBuf *args) {save_restoreSet_NFSHost(args[0].sval,args[1].sval,args[2].sval);}
+IOCSH_ARG_ARRAY save_restoreSet_NFSHost_Args[2] = {&save_restoreSet_NFSHost_Arg0,
+                                                   &save_restoreSet_NFSHost_Arg1};
+IOCSH_FUNCDEF   save_restoreSet_NFSHost_FuncDef = {"save_restoreSet_NFSHost",2,save_restoreSet_NFSHost_Args};
+static void     save_restoreSet_NFSHost_CallFunc(const iocshArgBuf *args) {save_restoreSet_NFSHost(args[0].sval,args[1].sval);}
 	
 /* int remove_data_set(char *filename); */
 IOCSH_ARG       remove_data_set_Arg0    = {"filename",iocshArgString};

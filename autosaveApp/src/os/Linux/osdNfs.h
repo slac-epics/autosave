@@ -41,6 +41,7 @@
 /* routines for NFS operation */
 int nfsMount(char *uidhost, char *path, char *mntpoint);          /* mount the NFS (details) */
 
+void checkHost(char *hostName, char *hostAddress);                /* check if the host name registered */
 int mountFileSystem(char *uidhost, char *path, char *mntpoint);   /* mount the NFS */
 int dismountFileSystem(char *mntpoint);                           /* dismount the NFS */
 

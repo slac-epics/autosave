@@ -99,6 +99,21 @@ cleanup:
         return rval;
 }
 
+/**
+ * check if the host name registered, if not, register it
+ */
+void checkHost(char *hostName, char *hostAddress)
+{
+    /* check the input parameters */
+    /*if(!hostName || !hostName[0] || !hostAddress || !hostAddress[0]) return NFS_INVALID_HOST;*/
+    
+    /* host checking */
+    /*if (hostGetByName(hostName) != NFS_SUCCESS) {
+        (void)hostAdd(hostName, hostAddress);
+    }*/
+    printf("Not supported by Linux\n");
+}
+
 /* Note: file system mounting is managed by Linux */
 int mountFileSystem(char *uidhost, char *path, char *mntpoint)
 {

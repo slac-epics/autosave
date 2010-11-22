@@ -9,6 +9,8 @@
 #  Rev:  dd-mmm-yyyy, Reviewer's Name    (USERNAME)
 #------------------------------------------------------------
 #  Mod:
+#        22-Nov-2010, Z.Geng             (GENG):
+#           release autosave-R4-7-lcls1
 #        20-Mar-2010, S. Hoobler         (SONYA):
 #           release autosave-R4-5-lcls2
 #        29-Apr-2009, K. Luchini         (LUCHINI):
@@ -16,6 +18,9 @@
 #
 #==============================================================
 #
+autosave-R4-7-lcls1:   * Formal version of autosave-beta3, with the modification of
+                         - back compatible interfaces for NFS mounting with autosave R4-7
+
 autosave-beta3:        * Fix the bug of waveform restore when the array end mark of "}" is exactly
                          the 120th character of the string in the .sav file
 

@@ -29,6 +29,7 @@ extern int    logMsg(char *fmt, ...);
 #define NFS_INVALID_MNTPOINT 3           /* mount point in invalid */
 
 /* routines for NFS operation */
+void checkHost(char *hostName, char *hostAddress);                /* check if the host name registered */
 int mountFileSystem(char *uidhost, char *path, char *mntpoint);   /* mount the NFS */
 int dismountFileSystem(char *mntpoint);                           /* dismount the NFS */
 

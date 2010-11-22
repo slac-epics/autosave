@@ -16,6 +16,20 @@ int save_restoreNFSOK    = 0;  /* for vxWorks, NFS has not been mounted before a
 int save_restoreIoErrors = 0;  /* for accumulate the IO error numbers, when the number larger than threshold, remount NFS */
 
 /**
+ * check if the host name registered, if not, register it
+ */
+void checkHost(char *hostName, char *hostAddress)
+{
+    /* check the input parameters */
+    if(!hostName || !hostName[0] || !hostAddress || !hostAddress[0]) return NFS_INVALID_HOST;
+    
+    /* host checking */
+    if (hostGetByName(hostName) != NFS_SUCCESS) {
+        (void)hostAdd(hostName, hostAddress);
+    }
+}
+
+/**
  * Mount the NFS
  *
  * Input:
@@ -34,7 +48,6 @@ int mountFileSystem(char *uidhost, char *path, char *mntpoint)
     if (!mntpoint || !mntpoint[0]) return NFS_INVALID_MNTPOINT;
 
     /* mount the file system */
-    if (hostGetByName(uidhost) == ERROR) (void)hostAdd(uidhost, path);
     if (nfsMount(uidhost, path, mntpoint) == OK) {
         save_restoreNFSOK    = 1;
         save_restoreIoErrors = 0;                      /* clean the counter */
