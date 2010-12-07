@@ -549,25 +549,26 @@ void save_restoreSet_NFSHost(char *hostname, char *address)
     fGetDateStr(datetime);
 
     /* get the settings */
-    strcpy(save_restoreNFSHostName, hostname);
+    strcpy(save_restoreNFSHostName, hostname);                 /* later, only the host name is used */
     strcpy(save_restoreNFSHostAddr, address);
 
     save_restoreIoErrors = 0;
 
-    if(save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0] && saveRestoreFilePath[0]) {
-        /* check the host */
-        checkHost(hostname, address);
+    /* check the host. For RTEMS, copy the host address to host name if the host name is empty; for vxWorks,
+       add the host name as alias of the host address (IP address) if the host name is not registered */
+    checkHost(save_restoreNFSHostName, save_restoreNFSHostAddr);
 
+    if(save_restoreNFSHostName[0] && save_restoreNFSHostAddr[0] && saveRestoreFilePath[0]) {        
         /* unmount NFS first if already mounted */
         if (save_restoreNFSOK) {
             if(dismountFileSystem(saveRestoreFilePath) == 0) {
                 errlogPrintf("save_restore:dismountFileSystem:dismounted '%s' [%s]\n", saveRestoreFilePath, datetime);
                 strncpy(SR_recentlyStr, "nfsUnmount", (STRING_LEN-1));
-            } else return;
+            }
         }
 
         /* mount the file system */
-        if (mountFileSystem(hostname, saveRestoreFilePath, saveRestoreFilePath) == NFS_SUCCESS) {
+        if (mountFileSystem(save_restoreNFSHostName, saveRestoreFilePath, saveRestoreFilePath) == NFS_SUCCESS) {
             errlogPrintf("save_restore:mountFileSystem:successfully mounted '%s'\n", saveRestoreFilePath);
             strncpy(SR_recentlyStr, "nfsMount succeeded", (STRING_LEN-1));
         }
@@ -1417,7 +1418,7 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	stat(filename, &fileStat);
 	
 	if((check_file(filename) != BS_OK) || (fileStat.st_size <= 0) || (difftime(time(NULL), fileStat.st_mtime) > 10.0)) {
-		errlogPrintf("save_restore:write_it: file written checking failure [%s]\n", datetime);
+		errlogPrintf("save_restore:write_it: file %s written checking failure [%s]\n", filename, datetime);
 		return(ERROR);
 	}	
 	

@@ -212,7 +212,7 @@ STATIC long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *valu
 	DBADDR	dbaddr;
 	DBADDR	*paddr = &dbaddr;
 	dbfType field_type = pdbentry->pflddes->field_type;
-	short special = pdbentry->pflddes->special;
+	short special = pdbentry->pflddes->special;	
 	
 	if (save_restoreDebug >= 5) errlogPrintf("dbrestore:scalar_restore:entry:field type '%s'\n", pamapdbfType[field_type].strvalue);
 	switch (field_type) {
@@ -237,7 +237,7 @@ STATIC long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *valu
 		if ((s = dbVerify(pdbentry, value_string))) {
 			errlogPrintf("save_restore: for '%s', dbVerify() says '%s'\n", PVname, s);
 			status = -1;
-		}
+		}				
 		break;
 
 	case DBF_INLINK: case DBF_OUTLINK: case DBF_FWDLINK:

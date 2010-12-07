@@ -6,27 +6,54 @@
  * Created by: Zheqiao Geng, gengzq@slac.stanford.edu
  * Created on: Aug. 13, 2010
  * Description: Realize the basic function for NFS mount and dismount
+ *
+ * Modified by: Zheqiao Geng
+ * Modified on: Dec 02, 2010
+ * Description:
+ *    1. set the initial value of save_restoreNFSOK to 0
+ *    2. realize the checkHost routine to copy the IP address to the hostName string
+ *       if the hostName string is empty
+ * Note:
+ *    a). If the user does not call the routine save_restoreSet_NFSHost(char *hostname, char *address)
+ *        at his startup script, the NFS mounting functionalities will be disabled, and the NFS should
+ *        be managed outside autosave
+ *    b). If the user used it, all NFS functionalities including the remounting will be enabled 
  ***********************************************/
 #include "osdNfs.h"
 
 /**
  * Global variables
  */
-int save_restoreNFSOK    = 1;  /* for RTEMS, NFS has been mounted before autosave starts */
-int save_restoreIoErrors = 0;  /* for accumulate the IO error numbers, when the number larger than threshold, remount NFS */
+int save_restoreNFSOK    = 0;  /* assume the NFS is not mounted at first, this will enable the program to try to mount
+                                  the NFS at first. For some applications, NFS is not managed by autosave, this flag will be
+				  automatically set to 1 if the file saving is successfull, because from that we know that the
+				  NFS must be OK, similarly, the save_restoreIoErrors will be clean to zero at the same time  */
+int save_restoreIoErrors = 0;  /* to accumulate the IO error numbers, when the number larger than threshold, remount NFS */
 
 /**
- * check if the host name registered, if not, register it
+ * copy the IP address to the host name if the host name is not set (for RTEMS)
  */
 void checkHost(char *hostName, char *hostAddress)
 {
     /* check the input parameters */
-    if(!hostName || !hostName[0] || !hostAddress || !hostAddress[0]) return NFS_INVALID_HOST;
+    /*if(!hostName || !hostName[0] || !hostAddress || !hostAddress[0]) return;*/
     
     /* host checking */
-    if (hostGetByName(hostName) != NFS_SUCCESS) {
+    /*if (gethostbyname(hostName) != NFS_SUCCESS) {
         (void)hostAdd(hostName, hostAddress);
-    }
+    }*/
+    /* Note: it seems that the routine of hostAdd is not supported by RTEMS. And because the nfsMount routine
+             of RTEMS can accept both host name and IP address, so here we copy the address into the host name.
+	     But be careful, in this case, the input of char*hostName and char*hostAddress must be a buffer pointer,
+	     but not a constant string, the buffer size should be same in principle. So the routine of 
+	     save_restoreSet_NFSHost(char *hostname, char *address) can be used in both ways:
+	             save_restoreSet_NFSHost("myname", "192.168.2.1");
+		     save_restoreSet_NFSHost("", "192.168.2.1");                                                
+		     
+             Further more, if the user want to use the hostName, the host name must be already registered! */
+	     
+    if(hostName && hostAddress[0])
+        strcpy(hostName, hostAddress);	     	     
 }
 
 /**

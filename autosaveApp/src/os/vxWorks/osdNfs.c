@@ -21,7 +21,7 @@ int save_restoreIoErrors = 0;  /* for accumulate the IO error numbers, when the 
 void checkHost(char *hostName, char *hostAddress)
 {
     /* check the input parameters */
-    if(!hostName || !hostName[0] || !hostAddress || !hostAddress[0]) return NFS_INVALID_HOST;
+    if(!hostName || !hostName[0] || !hostAddress || !hostAddress[0]) return;
     
     /* host checking */
     if (hostGetByName(hostName) != NFS_SUCCESS) {
