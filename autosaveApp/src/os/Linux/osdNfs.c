@@ -132,7 +132,8 @@ int mountFileSystem(char *uidhost, char *path, char *mntpoint)
         return NFS_FAILURE;
     }*/
     
-    printf("NFS mounting for Linux is managed by OS\n");    
+    printf("NFS mounting for Linux is managed by OS\n"); 
+    return 0;   
 }
 
 /* Note: file system mounting is managed by Linux */
@@ -146,4 +147,5 @@ int dismountFileSystem(char *mntpoint)
     return umount(mntpoint);*/                           /* 0 - succeed; -1 - failed */
     
     printf("Not allowed to dismount for Linux\n"); 
+    return 0;
 }

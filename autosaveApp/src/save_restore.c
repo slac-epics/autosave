@@ -168,6 +168,10 @@
 mode_t file_permissions = (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
 #endif
 
+/* qiao: declare the two file operation routines to remove the warnings for RTEMS */
+FILE *fdopen(int fildes, const char *mode);
+int fileno(FILE *);
+
 #define TIME2WAIT 20		/* time to wait for semaphores sem_remove and sem_do_manual_op */
 #define BACKWARDS_LIST 0	/* old list order was backwards */
 
