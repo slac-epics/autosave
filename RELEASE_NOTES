@@ -9,6 +9,8 @@
 #  Rev:  dd-mmm-yyyy, Reviewer's Name    (USERNAME)
 #------------------------------------------------------------
 #  Mod:
+#        08-Dec-2010, Z.Geng             (GENG):
+#           release autosave-R4-7-lcls2
 #        22-Nov-2010, Z.Geng             (GENG):
 #           release autosave-R4-7-lcls1
 #        20-Mar-2010, S. Hoobler         (SONYA):
@@ -18,6 +20,8 @@
 #
 #==============================================================
 #
+autosave-R4-7-lcls2:   * fixe the bug of NFS mounting for RTEMS in the last release 
+
 autosave-R4-7-lcls1:   * Formal version of autosave-beta3, with the modification of
                          - back compatible interfaces for NFS mounting with autosave R4-7
 
