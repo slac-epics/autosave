@@ -20,7 +20,7 @@
 #
 #==============================================================
 #
-autosave-R4-7-lcls2:   * fixe the bug of NFS mounting for RTEMS in the last release 
+autosave-R4-7-lcls2:   * Fixed the bug of NFS mounting for RTEMS in the last release 
 
 autosave-R4-7-lcls1:   * Formal version of autosave-beta3, with the modification of
                          - back compatible interfaces for NFS mounting with autosave R4-7
