@@ -20,6 +20,9 @@
 #
 #==============================================================
 #
+autosave-R4-7-lcls3:   * Modifications to build against both EPICS BASE
+                         R3-14-12 and EPICS R3-14-8-2
+
 autosave-R4-7-lcls2:   * Fixed the bug of NFS mounting for RTEMS in the last release 
 
 autosave-R4-7-lcls1:   * Formal version of autosave-beta3, with the modification of
