@@ -20,7 +20,7 @@
 #
 #==============================================================
 #
-autosave-R4-7-lcls4:   * Modify RELEASE_SITE to use EPICS R3-14-8-2-lcls6-p1
+autosave-R4-7-lcls4:   * Modify RELEASE_SITE to use EPICS R3-14-8-2-lcls6_p1
 
 autosave-R4-7-lcls3:   * Modifications to build against both EPICS BASE
                          R3-14-12 and EPICS R3-14-8-2
