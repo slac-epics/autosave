@@ -222,7 +222,7 @@ STATIC long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *valu
 		status = dbPutString(pdbentry, value_string);
 		if (save_restoreDebug >= 15) {
 			errlogPrintf("dbrestore:scalar_restore: dbPutString() returns %ld:\n", status);
-			errMessage(status, " ");
+			errPrintf(status, __FILE__, __LINE__, " ");
 		}
 		if ((s = dbVerify(pdbentry, value_string))) {
 			errlogPrintf("save_restore: for '%s', dbVerify() says '%s'\n", PVname, s);
@@ -236,7 +236,7 @@ STATIC long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *valu
 			status = dbPutString(pdbentry, value_string);
 			if (save_restoreDebug >= 15) {
 				errlogPrintf("dbrestore:scalar_restore: dbPutString() returns %ld:\n", status);
-				errMessage(status, " ");
+				errPrintf(status, __FILE__, __LINE__, " ");
 			}
 			if ((s = dbVerify(pdbentry, value_string))) {
 				errlogPrintf("save_restore: for '%s', dbVerify() says '%s'\n", PVname, s);
@@ -252,7 +252,7 @@ STATIC long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *valu
 		status = dbPutMenuIndex(pdbentry, n);
 		if (save_restoreDebug >= 15) {
 			errlogPrintf("dbrestore:scalar_restore: dbPutMenuIndex() returns %ld:\n", status);
-			errMessage(status, " ");
+			errPrintf(status, __FILE__, __LINE__, " ");
 		}
 		break;
 
@@ -286,7 +286,7 @@ STATIC long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *valu
 	if (status) {
 		errlogPrintf("save_restore: dbPutString/dbPutMenuIndex of '%s' for '%s' failed\n",
 			value_string, PVname);
-		errMessage(status," ");
+		errPrintf(status,__FILE__, __LINE__, " ");
 	}
 	if (save_restoreDebug >= 15) {
 		errlogPrintf("dbrestore:scalar_restore: dbGetString() returns '%s'\n",dbGetString(pdbentry));
