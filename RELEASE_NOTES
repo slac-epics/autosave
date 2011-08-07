@@ -9,6 +9,8 @@
 #  Rev:  dd-mmm-yyyy, Reviewer's Name    (USERNAME)
 #------------------------------------------------------------
 #  Mod:
+#        06-Aug-2011, Z.Geng             (GENG):
+#           release autosave-R4-7-lcls5
 #        08-Dec-2010, Z.Geng             (GENG):
 #           release autosave-R4-7-lcls2
 #        22-Nov-2010, Z.Geng             (GENG):
@@ -20,6 +22,8 @@
 #
 #==============================================================
 #
+autosave-R4-7-lcls5:   * Bug fixing for compiling for vxWorks
+
 autosave-R4-7-lcls4:   * Modify RELEASE_SITE to use EPICS R3-14-8-2-lcls6_p1
 
 autosave-R4-7-lcls3:   * Modifications to build against both EPICS BASE
