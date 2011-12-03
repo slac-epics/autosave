@@ -22,6 +22,11 @@
 #
 #==============================================================
 #
+autosave-R4-8-lcls1:   Updates from APS to bring SLAC up to version
+                       R4-8
+                       READ APS Release Notes:
+                       http://www.aps.anl.gov/bcda/synApps/autosave/autosaveReleaseNotes.html
+
 autosave-R4-7-lcls5:   * Bug fixing for compiling for vxWorks
 
 autosave-R4-7-lcls4:   * Modify RELEASE_SITE to use EPICS R3-14-8-2-lcls6_p1
