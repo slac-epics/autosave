@@ -12,7 +12,6 @@ TEMPLATE_TOP=$(EPICS_BASE)/templates/makeBaseApp/top
 # ===========================================================
 # Define the cvs module version that you will use
 # ==========================================================
-#BASE_MODULE_VERSION=base-R3-14-8-2-lcls6
 BASE_MODULE_VERSION=$(EPICS_BASE_VER)
 
 # =================================================================

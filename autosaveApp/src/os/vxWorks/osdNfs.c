@@ -8,6 +8,7 @@
  * Description: Realize the basic function for NFS mount and dismount
  ***********************************************/
 #include "osdNfs.h"
+extern char saveRestoreFilePath[];              /* path to save files */
 
 /**
  * Global variables
@@ -16,45 +17,33 @@ int save_restoreNFSOK    = 0;  /* for vxWorks, NFS has not been mounted before a
 int save_restoreIoErrors = 0;  /* for accumulate the IO error numbers, when the number larger than threshold, remount NFS */
 
 /**
- * check if the host name registered, if not, register it
- */
-void checkHost(char *hostName, char *hostAddress)
-{
-    /* check the input parameters */
-    if(!hostName || !hostName[0] || !hostAddress || !hostAddress[0]) return;
-    
-    /* host checking */
-    if (hostGetByName(hostName) != NFS_SUCCESS) {
-        (void)hostAdd(hostName, hostAddress);
-    }
-}
-
-/**
  * Mount the NFS
  *
  * Input:
  *    uidhost  - string. The NFS server and uid/gid
+ *    addr     - string. IP address, in case host has not already been added
  *    path     - string. Absolute path on the NFS server
  *    mntpoint - string. Local path
  *
  * Output:
  *    See the definition of NFS operation error codes
  */
-int mountFileSystem(char *uidhost, char *path, char *mntpoint)
+int mountFileSystem(char *uidhost, char *addr, char *path, char *mntpoint)
 {
     /* check the input parameters */
-    if (!uidhost || !uidhost[0])   return NFS_INVALID_HOST;
-    if (!path || !path[0])         return NFS_INVALID_PATH;
-    if (!mntpoint || !mntpoint[0]) return NFS_INVALID_MNTPOINT;
+    if (!uidhost || !uidhost[0])   return ERROR;
+    if (!path || !path[0])         return ERROR;
+    if (!mntpoint || !mntpoint[0]) return ERROR;
 
     /* mount the file system */
+    if (hostGetByName(uidhost) == ERROR) (void)hostAdd(uidhost, addr);
     if (nfsMount(uidhost, path, mntpoint) == OK) {
         save_restoreNFSOK    = 1;
         save_restoreIoErrors = 0;                      /* clean the counter */
-        return NFS_SUCCESS;
+        return OK;
     } else {
         save_restoreNFSOK = 0;
-        return NFS_FAILURE;
+        return ERROR;
     }
 }
 
@@ -70,15 +59,21 @@ int mountFileSystem(char *uidhost, char *path, char *mntpoint)
 int dismountFileSystem(char *mntpoint)
 {
     /* check the input parameters */
-    if (!mntpoint || !mntpoint[0]) return NFS_INVALID_MNTPOINT;
+    if (!mntpoint || !mntpoint[0]) {
+		if (saveRestoreFilePath && saveRestoreFilePath[0]) {
+		    strncpy(mntpoint, saveRestoreFilePath, (NFS_PATH_LEN-1));
+		} else {
+			return ERROR;
+		}
+	}
 
     /* unmount the file system */
     
     if (nfsUnmount(mntpoint) == OK) {
         save_restoreNFSOK = 0;
-        return NFS_SUCCESS;
+        return OK;
     } else {
-        return NFS_FAILURE;
+        return ERROR;
     }
 }
 

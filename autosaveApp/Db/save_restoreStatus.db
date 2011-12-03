@@ -3,10 +3,6 @@
 #! DBD("../../../../xxx/dbd/iocxxxVX.dbd")
 #! DBDEND
 
-#! Modified by: Zheqiao Geng, gengzq@slac.stanford.edu
-#! Modified on: Aug. 12, 2010
-#! Description: Add "ZNAM" and "ONAM" to all bo record instances
-
 record(bo, "$(P)SR_heartbeat") {
   field(DTYP, "Soft Channel")
   field(ZNAM, "0")
@@ -233,7 +229,6 @@ record(mbbo, "$(P)SR_4_Status") {
 }
 
 record(stringout, "$(P)SR_4_StatusStr") {
-
   field(DTYP, "Soft Channel")
   field(VAL, "Status unknown")
 }

@@ -21,7 +21,6 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
-#include <linux/fs.h>
 
 #define NFS_PATH_LEN 255                /* string length for NFS related path */
 
@@ -38,10 +37,8 @@
 #define NFS_INVALID_MNTPOINT 3           /* mount point in invalid */
 
 /* NFS operation definitions */
-#define UIDSEP            '@'
 
 /* routines for NFS operation */
-int nfsMount(char *uidhost, char *path, char *mntpoint);          /* mount the NFS (details) */
 
 int mountFileSystem(char *uidhost, char *addr, char *path, char *mntpoint);   /* mount the NFS */
 int dismountFileSystem(char *mntpoint);                           /* dismount the NFS */
