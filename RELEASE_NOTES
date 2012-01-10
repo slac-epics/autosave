@@ -22,6 +22,9 @@
 #
 #==============================================================
 #
+autosave-R4-8-lcls2:   Fixed bug where empty wavelengths were saved as scalars 
+                       and restored with incorrect values
+
 autosave-R4-8-lcls1:   Updates from APS to bring SLAC up to version
                        R4-8
                        READ APS Release Notes:
