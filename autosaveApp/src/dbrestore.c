@@ -1191,7 +1191,12 @@ long SR_write_array_data(FILE *out_fd, char *name, void *pArray, long num_elemen
 	field_type = paddr->field_type;
 
 	n = fprintf(out_fd, "%-s %1c ", ARRAY_MARKER, ARRAY_BEGIN);
-	for (i=0; i<num_elements; i++) {
+
+	// handle array of zero length
+	if (num_elements == 0) {  
+		n += fprintf(out_fd, "%1c%d%1c ", ELEMENT_BEGIN, 0, ELEMENT_END);
+	}		    	
+	for (i=0; i<num_elements; i++) {  
 		switch(field_type) {
 		case DBF_STRING:
 			p_char = (char *)pArray;
