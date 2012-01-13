@@ -1405,8 +1405,8 @@ STATIC int write_it(char *filename, struct chlist *plist)
 		}
 
 		errno = 0;
-		//if (pchannel->curr_elements <= 1) {
-		if (pchannel->max_elements <= 1) { // curr_elements may only be 1 which would cause an array to be treated as a scalar
+		/* if (pchannel->curr_elements <= 1) { */
+		if (pchannel->max_elements <= 1) { /* curr_elements may only be 1 which would cause an array to be treated as a scalar */
 			/* treat as scalar */
 			if (pchannel->enum_val >= 0) {
 				n = fprintf(out_fd, "%d\n",pchannel->enum_val);

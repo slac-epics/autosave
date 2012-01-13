@@ -1192,7 +1192,7 @@ long SR_write_array_data(FILE *out_fd, char *name, void *pArray, long num_elemen
 
 	n = fprintf(out_fd, "%-s %1c ", ARRAY_MARKER, ARRAY_BEGIN);
 
-	// handle array of zero length
+	/* handle array of zero length */
 	if (num_elements == 0) {  
 		n += fprintf(out_fd, "%1c%d%1c ", ELEMENT_BEGIN, 0, ELEMENT_END);
 	}		    	
