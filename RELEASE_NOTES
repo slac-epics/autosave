@@ -22,6 +22,8 @@
 #
 #==============================================================
 #
+autosave-R4-8-lcls3:   Had to change comments from // to /* style to compile in R3-14-8-2
+
 autosave-R4-8-lcls2:   Fixed bug where empty wavelengths were saved as scalars 
                        and restored with incorrect values
 
