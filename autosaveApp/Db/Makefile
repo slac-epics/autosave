@@ -22,8 +22,8 @@ DB += SR_test.db
 # ARCHIVE += <file>.substitutions
 # ARCHIVE += <file>.template
 #
-ARCHIVE += archive_SR.substitutions
-ARCHIVE += archive_SR.template
+ARCHIVE += archive_SR.sub-arch
+ARCHIVE += archive_SR.tpl-arch
 
 #----------------------------------------------------
 # If <anyname>.db template is not named <anyname>*.template add
