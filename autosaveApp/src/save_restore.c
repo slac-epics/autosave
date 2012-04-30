@@ -1330,7 +1330,7 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	int 			n, problem = 0;
 	char			datetime[32];
     int             file_check;
-    double          delta_time;
+/*    double          delta_time; */
 	struct stat		fileStat;		/* qiao: file state */	
 
 	fGetDateStr(datetime);
@@ -1496,10 +1496,16 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	/* qiao: check the file state: the file contents, file size and the save time of the file */
 	stat(filename, &fileStat);
     file_check = check_file(filename);
-    delta_time = difftime(time(NULL), fileStat.st_mtime);
-	if ((file_check != BS_OK) || (fileStat.st_size <= 0) ||  (delta_time > 10.0)) {
+/* nia 04/30/2012: Remove delta time check, causing a lot of extraneous/misleading errlog messages if delta_time exceeded even though file write was successful.
+                   Don't see anything else happening except errlog messages so seems safe to remove it, it's not a timeout */
+/*    delta_time = difftime(time(NULL), fileStat.st_mtime); 
+	if ((file_check != BS_OK) || (fileStat.st_size <= 0) ||  (delta_time > 10.0)) { 
+	if ((file_check != BS_OK) || (fileStat.st_size <= 0)) { 
 		errlogPrintf("save_restore:write_it: file written checking failure [%s], check_file=%d, size=%ld, delta_time=%f\n", 
-            datetime, file_check, fileStat.st_size, delta_time);
+            datetime, file_check, fileStat.st_size, delta_time); */
+	if ((file_check != BS_OK) || (fileStat.st_size <= 0)) { 
+		errlogPrintf("save_restore:write_it: file written checking failure [%s], check_file=%d, size=%ld\n", 
+            datetime, file_check, fileStat.st_size); 
 		return(ERROR);
 	}	
 	
