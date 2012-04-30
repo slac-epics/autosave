@@ -22,6 +22,8 @@
 #
 #==============================================================
 #
+autosave-R4-8-lcls4:   Remove delta_time (10 sec) check in write_it() when verifying if file saved. (04/30/2012)
+
 autosave-R4-8-lcls3:   Had to change comments from // to /* style to compile in R3-14-8-2
 
 autosave-R4-8-lcls2:   Fixed bug where empty wavelengths were saved as scalars 
