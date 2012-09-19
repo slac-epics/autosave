@@ -552,7 +552,8 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string, 
 							p_long[num_read++] = atol(string);
 							break;
 						case DBF_ULONG:
-							p_ulong[num_read++] = (unsigned long)atol(string);
+							//p_ulong[num_read++] = (unsigned long)atol(string);
+							p_ulong[num_read++] = (unsigned long)atoll(string);
 							break;
 						case DBF_FLOAT:
 							p_float[num_read++] = mySafeDoubleToFloat(atof(string));
