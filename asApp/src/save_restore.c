@@ -103,8 +103,33 @@
  * 12/06/06  tmm  v5.1 Don't even print the value of errno if fprintf() sets it.
  *                In tornado 2.2.1, fprintf() is setting errno every time, so
  *                the info is useless for diagnostic purposes.
+ * 03/16/07  tmm  v5.2 create_xxx_set can now specify PV names from which file
+ *                path and file name are to be read, by including SAVENAMEPV
+ *                and/or SAVEPATHPV in the macro string supplied as an argument.
+ *                Note this can be done only on the first call to create_xxx_set()
+ *                for a save set, because only the first call results in a call to
+ *                readReqFile(), in which the macro string is parsed.  If either
+ *                macro is specified, save_restore will not maintain backup or
+ *                files for the save set.
+ * 03/19/07  tmm  v5.2 Don't print errno unless function returns an error.
+ * 09/21/07  tmm  v5.3 New function, save_restoreSet_FilePermissions(),  allows control
+ *                over permissions with which .sav files are created.
+ * 11/19/07  tmm  v5.4 After failing to write a save file, retry after
+ *                save_restoreRetrySeconds.  (New function, save_restoreSet_RetrySeconds().)
+ *                Previously, we retried only after the file system was remounted, or waited
+ *                until the next time the set was triggered.  Also, no longer retry fclose()
+ *                100 times; now retry twice at most before giving up.
+ *                Don't write sequence files (copy .sav to .sav<n>) for a list in failure.
+ *                v5.3 failed to truncate the file when it open()'ed it (when compiled with
+ *                SET_FILE_PERMISSIONS nonzero).  This caused the file to have extra characters
+ *                if its useful length decreased and then increased, and restore thought the
+ *                file was bad.
+ * 03/10/08  tmm  v5.5 Merged in several improvements from Ben Franksen:
+ *                Make use of status PV's optional and controllable by function call.
+ *                Report failed connections to PV's at connect time.
+ *                Allow embedded '.' in save-file name
  */
-#define		SRVERSION "save/restore V5.1"
+#define		SRVERSION "save/restore V5.5"
 
 #ifdef vxWorks
 #include	<vxWorks.h>
@@ -143,6 +168,17 @@ extern int logMsg(char *fmt, ...);
 #include	<epicsTime.h>
 #include	"save_restore.h"
 #include 	"fGetDateStr.h"
+
+#ifndef _WIN32
+  #define SET_FILE_PERMISSIONS 1
+#endif
+
+#if SET_FILE_PERMISSIONS
+#include "sys/types.h"
+#include "fcntl.h"
+/* common file_permissions = S_IRUSR S_IWUSR S_IRGRP S_IWGRP S_IROTH S_IWOTH */
+mode_t file_permissions = (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
+#endif
 
 #define TIME2WAIT 20		/* time to wait for semaphores sem_remove and sem_do_manual_op */
 #define BACKWARDS_LIST 0	/* old list order was backwards */
@@ -185,6 +221,7 @@ struct chlist {								/* save set list element */
 	int				not_connected;			/* # bad channels not saved/connected */
 	int				backup_sequence_num;	/* appended to backup files */
 	epicsTimeStamp	backup_time;
+	epicsTimeStamp	save_attempt_time;
 	epicsTimeStamp	save_time;
 	/* time_t			backup_time; */
 	/* time_t			save_time; */
@@ -202,6 +239,9 @@ struct chlist {								/* save set list element */
 	char			timeStr[STRING_LEN];
 	char			time_PV[PV_NAME_LEN];
 	chid			time_chid;
+	char			savePathPV[PV_NAME_LEN], saveNamePV[PV_NAME_LEN];
+	chid			savePathPV_chid, saveNamePV_chid;
+	int				do_backups;
 };
 
 struct channel {					/* database channel list element */
@@ -278,11 +318,14 @@ volatile int	save_restoreNumSeqFiles = 3;			/* number of sequence files to maint
 volatile int	save_restoreSeqPeriodInSeconds = 60;	/* period between sequence-file writes */
 volatile int	save_restoreIncompleteSetsOk = 1;		/* will save/restore incomplete sets? */
 volatile int	save_restoreDatedBackupFiles = 1;		/* save backups as <filename>.bu or <filename>_YYMMDD-HHMMSS */
+volatile int	save_restoreRetrySeconds = 60;			/* Time before retrying write after a failure. */
+volatile int	save_restoreUseStatusPVs = 1;			/* use PVs for status etc. */
 
 epicsExportAddress(int, save_restoreNumSeqFiles);
 epicsExportAddress(int, save_restoreSeqPeriodInSeconds);
 epicsExportAddress(int, save_restoreIncompleteSetsOk);
 epicsExportAddress(int, save_restoreDatedBackupFiles);
+epicsExportAddress(int, save_restoreUseStatusPVs);
 
 /* variables for managing NFS mount */
 char save_restoreNFSHostName[STRING_LEN] = "";
@@ -344,6 +387,16 @@ void save_restoreSet_SeqPeriodInSeconds(int period) {save_restoreSeqPeriodInSeco
 void save_restoreSet_IncompleteSetsOk(int ok) {save_restoreIncompleteSetsOk = ok;}
 void save_restoreSet_DatedBackupFiles(int ok) {save_restoreDatedBackupFiles = ok;}
 void save_restoreSet_status_prefix(char *prefix) {strncpy(status_prefix, prefix, 29);}
+#if SET_FILE_PERMISSIONS
+void save_restoreSet_FilePermissions(int permissions) {
+	file_permissions = permissions;
+	printf("save_restore: File permissions set to 0%o\n", (unsigned int)file_permissions);
+}
+#endif
+void save_restoreSet_RetrySeconds(int seconds) {
+	if (seconds >= 0) save_restoreRetrySeconds = seconds;
+}
+void save_restoreSet_UseStatusPVs(int ok) {save_restoreUseStatusPVs = ok;}
 
 /********************************* code *********************************/
 
@@ -354,7 +407,7 @@ STATIC int lockList() {
 	epicsMutexLock(sr_mutex);
 	if (!listLock) listLock = caller_owns_lock = 1;
 	epicsMutexUnlock(sr_mutex);
-	if (save_restoreDebug > 1) printf("lockList: listLock=%d\n", listLock);
+	if (save_restoreDebug >= 10) printf("lockList: listLock=%d\n", listLock);
 	return(caller_owns_lock);
 }
 
@@ -362,7 +415,7 @@ STATIC void unlockList() {
 	epicsMutexLock(sr_mutex);
 	listLock = 0;
 	epicsMutexUnlock(sr_mutex);
-	if (save_restoreDebug > 1) printf("unlockList: listLock=%d\n", listLock);
+	if (save_restoreDebug >= 10) printf("unlockList: listLock=%d\n", listLock);
 }
 
 STATIC int waitForListLock(double secondsToWait) {
@@ -525,8 +578,7 @@ STATIC int save_restore(void)
 {
 	struct chlist *plist = NULL;
 	char *cp, nameString[FN_LEN];
-	int i, do_seq_check, just_remounted, n;
-	long status;
+	int i, do_seq_check, just_remounted, n, saveNeeded=0;
 	epicsTimeStamp currTime, last_seq_check, remount_check_time;
 
 	if (save_restoreDebug)
@@ -542,7 +594,7 @@ STATIC int save_restore(void)
 #endif
 
 	/* Build names for save_restore general status PV's with status_prefix */
-	if (*status_prefix && (*SR_status_PV == '\0')) {
+	if (save_restoreUseStatusPVs && *status_prefix && (*SR_status_PV == '\0')) {
 		strcpy(SR_status_PV, status_prefix);
 		strcat(SR_status_PV, "SR_status");
 		strcpy(SR_heartbeat_PV, status_prefix);
@@ -583,15 +635,12 @@ STATIC int save_restore(void)
 				strncpy(SR_rebootStatusStr, restoreFileList.pass1StatusStr[i], (STRING_LEN-1));
 			}
 		}
-		if (SR_rebootStatus_chid && (ca_state(SR_rebootStatus_chid) == cs_conn))
-			ca_put(DBR_LONG, SR_rebootStatus_chid, &SR_rebootStatus);
-		if (SR_rebootStatusStr_chid && (ca_state(SR_rebootStatusStr_chid) == cs_conn))
-			ca_put(DBR_STRING, SR_rebootStatusStr_chid, &SR_rebootStatusStr);
+		TRY_TO_PUT(DBR_LONG, SR_rebootStatus_chid, &SR_rebootStatus);
+		TRY_TO_PUT(DBR_STRING, SR_rebootStatusStr_chid, &SR_rebootStatusStr);
 		epicsTimeGetCurrent(&currTime);
 		epicsTimeToStrftime(SR_rebootTimeStr, sizeof(SR_rebootTimeStr),
 			TIMEFMT_noY, &currTime);
-		if (SR_rebootTime_chid && (ca_state(SR_rebootTime_chid) == cs_conn))
-			ca_put(DBR_STRING, SR_rebootTime_chid, &SR_rebootTimeStr);
+		TRY_TO_PUT(DBR_STRING, SR_rebootTime_chid, &SR_rebootTimeStr);
 	}
 
 	while(1) {
@@ -637,12 +686,22 @@ STATIC int save_restore(void)
 			if (plist->enabled_method != plist->save_method) enable_list(plist);
 
 			/*
-			 * Save lists that have triggered.  If we've just successfully remounted,
-			 * save lists that are in failure.
+			 * Save lists that have triggered.  Save lists that are in failure, if we've just remounted,
+			 * or if RETRY_SECS have elapsed since the last save attempt.
 			 */
-			if ( (plist->save_state & SINGLE_EVENTS)
-			  || ((plist->save_state & MONITORED) == MONITORED)
-			  || ((plist->status <= SR_STATUS_FAIL) && just_remounted)) {
+			saveNeeded = FALSE;
+			if (plist->save_state & SINGLE_EVENTS)
+				saveNeeded = TRUE;
+			else if ((plist->save_state & MONITORED) == MONITORED)
+				saveNeeded = TRUE;
+			else if (plist->status <= SR_STATUS_FAIL) {
+				if (just_remounted)
+					saveNeeded = TRUE;
+				else if (epicsTimeDiffInSeconds(&currTime, &plist->save_attempt_time) > save_restoreRetrySeconds)
+					saveNeeded = TRUE;
+			}
+
+			if (saveNeeded) {
 
 				/* fetch values all of the channels */
 				plist->not_connected = get_channel_values(plist);
@@ -653,7 +712,7 @@ STATIC int save_restore(void)
 			}
 
 			/*** Periodically make sequenced backup of most recent saved file ***/
-			if (do_seq_check) {
+			if (do_seq_check && plist->do_backups && (plist->status > SR_STATUS_FAIL)) {
 				if (save_restoreNumSeqFiles && plist->last_save_file &&
 					(epicsTimeDiffInSeconds(&currTime, &plist->backup_time) >
 						save_restoreSeqPeriodInSeconds)) {
@@ -693,66 +752,64 @@ STATIC int save_restore(void)
 
 		/* report status */
 		SR_heartbeat = (SR_heartbeat+1) % 2;
-		if (SR_status_chid && (ca_state(SR_status_chid) == cs_conn))
-			ca_put(DBR_LONG, SR_status_chid, &SR_status);
-		if (SR_heartbeat_chid && (ca_state(SR_heartbeat_chid) == cs_conn))
-			ca_put(DBR_LONG, SR_heartbeat_chid, &SR_heartbeat);
-		if (SR_statusStr_chid && (ca_state(SR_statusStr_chid) == cs_conn))
-			ca_put(DBR_STRING, SR_statusStr_chid, &SR_statusStr);
-		if (SR_recentlyStr_chid && (ca_state(SR_recentlyStr_chid) == cs_conn)) {
-			SR_recentlyStr[(STRING_LEN-1)] = '\0';
-			status = ca_put(DBR_STRING, SR_recentlyStr_chid, &SR_recentlyStr);
-		}
+		TRY_TO_PUT(DBR_LONG, SR_status_chid, &SR_status);
+		TRY_TO_PUT(DBR_LONG, SR_heartbeat_chid, &SR_heartbeat);
+		TRY_TO_PUT(DBR_STRING, SR_statusStr_chid, &SR_statusStr);
+		SR_recentlyStr[(STRING_LEN-1)] = '\0';
+		TRY_TO_PUT(DBR_STRING, SR_recentlyStr_chid, &SR_recentlyStr);
 
-		/*** set up list-specific status PV's for any new lists ***/
-/* BEGIN: This should be done with list locked */
-		for (plist = lptr; plist; plist = plist->pnext) {
-			/* If this is the first time for a list, connect to its status PV's */
-			if (plist->status_PV[0] == '\0') {
-				/*** Build PV names ***/
-				/* make common portion of PVname strings */
-				n = (PV_NAME_LEN-1) - sprintf(plist->status_PV, "%sSR_%1d_", status_prefix, plist->listNumber);
-				strcpy(plist->name_PV, plist->status_PV);
-				strcpy(plist->save_state_PV, plist->status_PV);
-				strcpy(plist->statusStr_PV, plist->status_PV);
-				strcpy(plist->time_PV, plist->status_PV);
-				/* make all PVname strings */
-				strncat(plist->status_PV, "Status", n);
-				strncat(plist->name_PV, "Name", n);
-				strncat(plist->save_state_PV, "State", n);
-				strncat(plist->statusStr_PV, "StatusStr", n);
-				strncat(plist->time_PV, "Time", n);
-				/* connect with PV's */
-				TATTLE(ca_search(plist->status_PV, &plist->status_chid), "save_restore: ca_search(%s) returned %s", plist->status_PV);
-				TATTLE(ca_search(plist->name_PV, &plist->name_chid), "save_restore: ca_search(%s) returned %s", plist->name_PV);
-				TATTLE(ca_search(plist->save_state_PV, &plist->save_state_chid), "save_restore: ca_search(%s) returned %s", plist->save_state_PV);
-				TATTLE(ca_search(plist->statusStr_PV, &plist->statusStr_chid), "save_restore: ca_search(%s) returned %s", plist->statusStr_PV);
-				TATTLE(ca_search(plist->time_PV, &plist->time_chid), "save_restore: ca_search(%s) returned %s", plist->time_PV);
-				if (ca_pend_io(0.5)!=ECA_NORMAL) {
-					errlogPrintf("save_restore: Can't connect to status PV(s) for list '%s'\n", plist->save_file);
+		if (save_restoreUseStatusPVs) {
+			/*** set up list-specific status PV's for any new lists ***/
+			while (waitForListLock(5) == 0) {
+				if (save_restoreDebug) errlogPrintf("save_restore: '%s' waiting for listLock()\n", plist->reqFile);
+			}
+			for (plist = lptr; plist; plist = plist->pnext) {
+				/*
+				 * If this is the first time for a list, and user has defined a status prefix,
+				 * connect to the list's status PV's
+				 */
+				if (*status_prefix && (plist->status_PV[0] == '\0')) {
+					/*** Build PV names ***/
+					/* make common portion of PVname strings */
+					n = (PV_NAME_LEN-1) - sprintf(plist->status_PV, "%sSR_%1d_", status_prefix, plist->listNumber);
+					strcpy(plist->name_PV, plist->status_PV);
+					strcpy(plist->save_state_PV, plist->status_PV);
+					strcpy(plist->statusStr_PV, plist->status_PV);
+					strcpy(plist->time_PV, plist->status_PV);
+					/* make all PVname strings */
+					strncat(plist->status_PV, "Status", n);
+					strncat(plist->name_PV, "Name", n);
+					strncat(plist->save_state_PV, "State", n);
+					strncat(plist->statusStr_PV, "StatusStr", n);
+					strncat(plist->time_PV, "Time", n);
+					/* connect with PV's */
+					TATTLE(ca_search(plist->status_PV, &plist->status_chid), "save_restore: ca_search(%s) returned %s", plist->status_PV);
+					TATTLE(ca_search(plist->name_PV, &plist->name_chid), "save_restore: ca_search(%s) returned %s", plist->name_PV);
+					TATTLE(ca_search(plist->save_state_PV, &plist->save_state_chid), "save_restore: ca_search(%s) returned %s", plist->save_state_PV);
+					TATTLE(ca_search(plist->statusStr_PV, &plist->statusStr_chid), "save_restore: ca_search(%s) returned %s", plist->statusStr_PV);
+					TATTLE(ca_search(plist->time_PV, &plist->time_chid), "save_restore: ca_search(%s) returned %s", plist->time_PV);
+					if (ca_pend_io(0.5)!=ECA_NORMAL) {
+						errlogPrintf("save_restore: Can't connect to status PV(s) for list '%s'\n", plist->save_file);
+					}
+				}
+
+				TRY_TO_PUT(DBR_LONG, plist->status_chid, &plist->status);
+				if (CONNECTED(plist->name_chid)) {
+					strncpy(nameString, plist->save_file, STRING_LEN-1);
+					cp = strrchr(nameString, (int)'.');
+					if (cp) *cp = 0;
+					ca_put(DBR_STRING, plist->name_chid, &nameString);
+				}
+				TRY_TO_PUT(DBR_LONG, plist->save_state_chid, &plist->save_state);
+				TRY_TO_PUT(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
+				if ((plist->status >= SR_STATUS_WARN) && (plist->save_time.secPastEpoch != 0)) {
+					epicsTimeToStrftime(plist->timeStr, sizeof(plist->timeStr),
+						TIMEFMT_noY, &plist->save_time);
+					TRY_TO_PUT(DBR_STRING, plist->time_chid, &plist->timeStr);
 				}
 			}
-
-			if (plist->status_chid && (ca_state(plist->status_chid) == cs_conn))
-				ca_put(DBR_LONG, plist->status_chid, &plist->status);
-			if (plist->name_chid && (ca_state(plist->name_chid) == cs_conn)) {
-				strncpy(nameString, plist->save_file, STRING_LEN-1);
-				cp = strrchr(nameString, (int)'.');
-				if (cp) *cp = 0;
-				ca_put(DBR_STRING, plist->name_chid, &nameString);
-			}
-			if (plist->save_state_chid && (ca_state(plist->save_state_chid) == cs_conn))
-				ca_put(DBR_LONG, plist->save_state_chid, &plist->save_state);
-			if (plist->statusStr_chid && (ca_state(plist->statusStr_chid) == cs_conn))
-				ca_put(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
-			if ((plist->status >= SR_STATUS_WARN) && (plist->save_time.secPastEpoch != 0)) {
-				epicsTimeToStrftime(plist->timeStr, sizeof(plist->timeStr),
-					TIMEFMT_noY, &plist->save_time);
-				if (plist->time_chid && (ca_state(plist->time_chid) == cs_conn))
-					ca_put(DBR_STRING, plist->time_chid, &plist->timeStr);
-			}
+			unlockList();
 		}
-/* END: This should be done with list locked */
 
 		/*** service user commands ***/
 		if (remove_dset) {
@@ -806,10 +863,15 @@ STATIC int connect_list(struct chlist *plist)
 	}
 
 	for (pchan = plist->pchan_list, n=m=0; pchan != 0; pchan = pchan->pnext, m++) {
-		if (pchan->chid && (ca_state(pchan->chid) == cs_conn)) {
-			strcpy(pchan->value,"Connected");
-			n++;
-		}
+		if (pchan->chid) {
+			if (ca_state(pchan->chid) == cs_conn) {
+				strcpy(pchan->value,"Connected");
+				n++;
+			} else {
+				errlogPrintf("save_restore: connect failed for channel '%s'\n", pchan->name);
+			}
+ 		}
+
 		pchan->max_elements = ca_element_count(pchan->chid);	/* just to see if it's an array */
 		pchan->curr_elements = pchan->max_elements;				/* begin with this assumption */
 		if (save_restoreDebug >= 10)
@@ -833,6 +895,20 @@ STATIC int connect_list(struct chlist *plist)
 		}
 	}
 	sprintf(SR_recentlyStr, "%s: %d of %d PV's connected", plist->save_file, n, m);
+
+	/* Connect to savePathPV and saveNamePV, if they are defined */
+	if (plist->savePathPV[0] || plist->saveNamePV[0]) {
+		if (plist->savePathPV[0]) {
+			TATTLE(ca_search(plist->savePathPV,&plist->savePathPV_chid), "save_restore: ca_search(%s) returned %s", plist->savePathPV);
+		}
+		if (plist->saveNamePV[0]) {
+			TATTLE(ca_search(plist->saveNamePV,&plist->saveNamePV_chid), "save_restore: ca_search(%s) returned %s", plist->saveNamePV);
+		}
+		if (ca_pend_io(0.5)!=ECA_NORMAL) {
+			errlogPrintf("save_restore: Can't connect to list-specific path/name PV(s)\n");
+		}
+	}
+
 	return(get_channel_values(plist));
 }
 
@@ -956,8 +1032,7 @@ STATIC int get_channel_values(struct chlist *plist)
 				if (save_restoreDebug >= 1) errlogPrintf("save_restore:get_channel_values: no CHID for '%s'\n", pchannel->name);
 			} else if (ca_state(pchannel->chid) != cs_conn) {
 				if (save_restoreDebug >= 1) errlogPrintf("save_restore:get_channel_values: %s not connected\n", pchannel->name);
-			}
-			if ((pchannel->max_elements < 1)) {
+			} else if ((pchannel->max_elements < 1)) {
 				if (save_restoreDebug >= 1) errlogPrintf("save_restore:get_channel_values: %s has, at most, %ld elements\n",
 					pchannel->name, pchannel->max_elements);
 			}
@@ -992,18 +1067,36 @@ STATIC int get_channel_values(struct chlist *plist)
  * NOTE: Assumes sr_mutex is locked
  *
  */
- 
+#define FPRINTF_FAILED	1
+#define CLOSE_FAILED 	2
 STATIC int write_it(char *filename, struct chlist *plist)
 {
 	FILE 			*out_fd;
+	int 			filedes = -1;
 	struct channel	*pchannel;
-	int 			n, i;
+	int 			n, problem = 0;
 	char			datetime[32];
 	
 	fGetDateStr(datetime);
 
 	/* open the file */
 	errno = 0;
+#if SET_FILE_PERMISSIONS
+	/* Note: must truncate, else file retains old characters when its used length decreases. */
+	filedes = open(filename, O_RDWR | O_CREAT | O_TRUNC, file_permissions);
+	if (filedes < 0) {
+		errlogPrintf("save_restore:write_it - unable to open file '%s' [%s]\n",
+			filename, datetime);
+		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
+		if (++save_restoreIoErrors > save_restoreRemountThreshold) {
+			save_restoreNFSOK = 0;
+			strncpy(SR_recentlyStr, "Too many I/O errors",(STRING_LEN-1));
+		}
+		return(ERROR);
+	} else {
+		out_fd = fdopen(filedes, "w");
+	}
+#else
 	if ((out_fd = fopen(filename,"w")) == NULL) {
 		errlogPrintf("save_restore:write_it - unable to open file '%s' [%s]\n",
 			filename, datetime);
@@ -1014,7 +1107,9 @@ STATIC int write_it(char *filename, struct chlist *plist)
 		}
 		return(ERROR);
 	}
-	else if (save_restoreDebug > 1)
+#endif
+
+	if ( out_fd != NULL && save_restoreDebug > 1)
 	{
 		printf("save_restore:write_it - opened file '%s' [%s]\n", filename, datetime);
 	}
@@ -1023,9 +1118,10 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	errno = 0;
 	n = fprintf(out_fd,"# %s\tAutomatically generated - DO NOT MODIFY - %s\n",
 			SRversion, datetime);
-	if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
 	if (n <= 0) {
 		errlogPrintf("save_restore:write_it: fprintf returned %d. [%s]\n", n, datetime);
+		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
+		problem |= FPRINTF_FAILED;
 		goto trouble;
 	}
 
@@ -1033,9 +1129,10 @@ STATIC int write_it(char *filename, struct chlist *plist)
 		errno = 0;
 		n = fprintf(out_fd,"! %d channel(s) not connected - or not all gets were successful\n",
 				plist->not_connected);
-		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
 		if (n <= 0) {
 			errlogPrintf("save_restore:write_it: fprintf returned %d. [%s]\n", n, datetime);
+			if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
+			problem |= FPRINTF_FAILED;
 			goto trouble;
 		}
 	}
@@ -1048,9 +1145,10 @@ STATIC int write_it(char *filename, struct chlist *plist)
 		} else {
 			n = fprintf(out_fd, "#%s ", pchannel->name);
 		}
-		/* if (errno) myPrintErrno("write_it", __FILE__, __LINE__); */
 		if (n <= 0) {
 			errlogPrintf("save_restore:write_it: fprintf returned %d. [%s]\n", n, datetime);
+			if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
+			problem |= FPRINTF_FAILED;
 			goto trouble;
 		}
 
@@ -1062,17 +1160,19 @@ STATIC int write_it(char *filename, struct chlist *plist)
 			} else {
 				n = fprintf(out_fd, "%-s\n", pchannel->value);
 			}
-			/* if (errno) myPrintErrno("write_it", __FILE__, __LINE__); */
 			if (n <= 0) {
 				errlogPrintf("save_restore:write_it: fprintf returned %d. [%s]\n", n, datetime);
+				if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
+				problem |= FPRINTF_FAILED;
 				goto trouble;
 			}
 		} else {
 			/* treat as array */
 			n = SR_write_array_data(out_fd, pchannel->name, (void *)pchannel->pArray, pchannel->curr_elements);
-			if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
 			if (n <= 0) {
 				errlogPrintf("save_restore:write_it: fprintf returned %d [%s].\n", n, datetime);
+				if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
+				problem |= FPRINTF_FAILED;
 				goto trouble;
 			}
 		}
@@ -1089,18 +1189,19 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	/* write file-is-ok marker */
 	errno = 0;
 	n = fprintf(out_fd, "<END>\n");
-	if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
 	if (n <= 0) {
 		errlogPrintf("save_restore:write_it: fprintf returned %d. [%s]\n", n, datetime);
+		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
+		problem |= FPRINTF_FAILED;
 		goto trouble;
 	}
 
 	/* flush everything to disk */
 	errno = 0;
 	n = fflush(out_fd);
-	if (n != 0){
-		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
+	if (n) {
 		errlogPrintf("save_restore:write_it: fflush returned %d [%s]\n", n, datetime);
+		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
 	}
 
 
@@ -1116,8 +1217,8 @@ STATIC int write_it(char *filename, struct chlist *plist)
         /* WIN32 has no real equivalent to fsync? */
 #else
 	n = fsync(fileno(out_fd));
-	if ((n != 0) && (errno == ENOTSUP)) { n = 0; errno = 0; }
-	if (n != 0) {
+	if (n && (errno == ENOTSUP)) { n = 0; errno = 0; }
+	if (n) {
 		errlogPrintf("save_restore:write_it: fsync returned %d [%s]\n", n, datetime);
 		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
 	}
@@ -1126,29 +1227,42 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	/* close the file */
 	errno = 0;
 	n = fclose(out_fd);
-	if (n != 0) {
+	if (n) {
 		errlogPrintf("save_restore:write_it: fclose returned %d [%s]\n", n, datetime);
 		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
+		problem |= CLOSE_FAILED;
 		goto trouble;
 	}
+#if SET_FILE_PERMISSIONS
+	if (filedes >= 0) {
+		close(filedes);
+		filedes = -1;
+	}
+#endif
 	return(OK);
 
 trouble:
-	/* try to close file */
-	for (i=1, n=1; n && i<100;i++) {
-		n = fclose(out_fd);
-		if (n && ((i%10)==0)) {
-			errlogPrintf("save_restore:write_it: fclose('%s') returned %d (%d tries)\n",
-				plist->save_file, n, i);
-			epicsThreadSleep(10.0);
-		}
+	/* close the file */
+	errno = 0;
+	n = fclose(out_fd);
+	if (n) {
+		errlogPrintf("save_restore:write_it: fclose('%s') returned %d\n", plist->save_file, n);
+		if (errno) myPrintErrno("write_it", __FILE__, __LINE__);
+	} else {
+		problem &= ~CLOSE_FAILED;
 	}
-	if (i >= 60) {
+	if (problem) {
 		fGetDateStr(datetime);
-		errlogPrintf("save_restore:write_it: Can't close '%s'; giving up. [%s]\n",
+		errlogPrintf("save_restore:write_it: Giving up on this attempt to write '%s'. [%s]\n",
 			plist->save_file, datetime);
 	}
-	return(ERROR);
+#if SET_FILE_PERMISSIONS
+	if (filedes >= 0) {
+		close(filedes);
+		filedes = -1;
+	}
+#endif
+	return(problem ? ERROR : OK);
 }
 
 
@@ -1195,47 +1309,64 @@ STATIC int write_save_file(struct chlist *plist)
 	fGetDateStr(datetime);
 	plist->status = SR_STATUS_OK;
 	strcpy(plist->statusStr, "Ok");
+	epicsTimeGetCurrent(&plist->save_attempt_time);
 
 	/* Make full file names */
-	strncpy(save_file, saveRestoreFilePath, sizeof(save_file) - 1);
-	strncat(save_file, plist->save_file, MAX(0, sizeof(save_file) - 1 - strlen(save_file)));
-	strcpy(backup_file, save_file);
-	strncat(backup_file, "B", 1);
+	if (plist->savePathPV_chid) {
+		/* This list's path name comes from a PV */
+		ca_array_get(DBR_STRING,1,plist->savePathPV_chid,tmpstr);
+		ca_pend_io(1.0);
+		if (tmpstr[0] == '\0') return(OK);
+		strncpy(save_file, tmpstr, sizeof(save_file) - 1);
+	} else {
+		/* Use standard path name. */
+		strncpy(save_file, saveRestoreFilePath, sizeof(save_file) - 1);
+	}
+	if (plist->saveNamePV_chid) {
+		/* This list's file name comes from a PV */
+		ca_array_get(DBR_STRING,1,plist->saveNamePV_chid,tmpstr);
+		ca_pend_io(1.0);
+		if (tmpstr[0] == '\0') return(OK);
+		strncat(save_file, tmpstr, MAX(0, sizeof(save_file) - 1 - strlen(save_file)));
+	} else {
+		/* Use file name constructed from the request file name. */
+		strncat(save_file, plist->save_file, MAX(0, sizeof(save_file) - 1 - strlen(save_file)));
+	}
 
-	/* Ensure that backup is ok before we overwrite .sav file. */
-	backup_state = check_file(backup_file);
-	if (backup_state != BS_OK) {
-		errlogPrintf("save_restore:write_save_file: Backup file (%s) bad or not found.  Writing a new one. [%s]\n", 
-			backup_file, datetime);
-		if (backup_state == BS_BAD) {
-			/* make a backup copy of the corrupted file */
-			strcpy(tmpstr, backup_file);
-			strcat(tmpstr, "_SBAD_");
-			if (save_restoreDatedBackupFiles) {
-				strcat(tmpstr, datetime);
-				sprintf(SR_recentlyStr, "Bad file: '%sB'", plist->save_file);
+	/* Currently, all lists do backups, unless their file path or file name comes from a PV. */
+	if (plist->do_backups) {
+		strcpy(backup_file, save_file);
+		strncat(backup_file, "B", 1);
+
+		/* Ensure that backup is ok before we overwrite .sav file. */
+		backup_state = check_file(backup_file);
+		if (backup_state != BS_OK) {
+			errlogPrintf("save_restore:write_save_file: Backup file (%s) bad or not found.  Writing a new one. [%s]\n", 
+				backup_file, datetime);
+			if (backup_state == BS_BAD) {
+				/* make a backup copy of the corrupted file */
+				strcpy(tmpstr, backup_file);
+				strcat(tmpstr, "_SBAD_");
+				if (save_restoreDatedBackupFiles) {
+					strcat(tmpstr, datetime);
+					sprintf(SR_recentlyStr, "Bad file: '%sB'", plist->save_file);
+				}
+				(void)myFileCopy(backup_file, tmpstr);
 			}
-			(void)myFileCopy(backup_file, tmpstr);
-		}
-		if (write_it(backup_file, plist) == ERROR) {
-			errlogPrintf("*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***\n");
-			errlogPrintf("save_restore:write_save_file: Can't write new backup file. [%s]\n", datetime);
-			errlogPrintf("*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***\n");
-			plist->status = SR_STATUS_FAIL;
-			strcpy(plist->statusStr, "Can't write .savB file");
-			if (plist->statusStr_chid && (ca_state(plist->statusStr_chid) == cs_conn)) {
-				ca_put(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
-				ca_flush_io();
+			if (write_it(backup_file, plist) == ERROR) {
+				errlogPrintf("*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***\n");
+				errlogPrintf("save_restore:write_save_file: Can't write new backup file. [%s]\n", datetime);
+				errlogPrintf("*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***\n");
+				plist->status = SR_STATUS_FAIL;
+				strcpy(plist->statusStr, "Can't write .savB file");
+				TRY_TO_PUT_AND_FLUSH(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
+				return(ERROR);
 			}
-			return(ERROR);
+			plist->status = SR_STATUS_WARN;
+			strcpy(plist->statusStr, ".savB file was bad");
+			TRY_TO_PUT_AND_FLUSH(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
+			backup_state = BS_NEW;
 		}
-		plist->status = SR_STATUS_WARN;
-		strcpy(plist->statusStr, ".savB file was bad");
-		if (plist->statusStr_chid && (ca_state(plist->statusStr_chid) == cs_conn)) {
-			ca_put(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
-			ca_flush_io();
-		}
-		backup_state = BS_NEW;
 	}
 
 	/*** Write the save file ***/
@@ -1246,10 +1377,7 @@ STATIC int write_save_file(struct chlist *plist)
 		errlogPrintf("*** *** *** *** *** *** *** *** *** *** *** *** *** *** *** *** ***\n");
 		plist->status = SR_STATUS_FAIL;
 		strcpy(plist->statusStr, "Can't write .sav file");
-		if (plist->statusStr_chid && (ca_state(plist->statusStr_chid) == cs_conn)) {
-			ca_put(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
-			ca_flush_io();
-		}
+		TRY_TO_PUT_AND_FLUSH(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
 		sprintf(SR_recentlyStr, "Can't write '%s'", plist->save_file);
 		return(ERROR);
 	}
@@ -1258,30 +1386,28 @@ STATIC int write_save_file(struct chlist *plist)
 	epicsTimeGetCurrent(&plist->save_time);
 	strcpy(plist->last_save_file, plist->save_file);
 
-	/*** Write a backup copy of the save file ***/
-	if (backup_state != BS_NEW) {
-		/* make a backup copy */
-		if (myFileCopy(save_file, backup_file) != OK) {
-			errlogPrintf("save_restore:write_save_file - Couldn't make backup '%s' [%s]\n",
-				backup_file, datetime);
-			plist->status = SR_STATUS_WARN;
-			strcpy(plist->statusStr, "Can't write .savB file");
-			if (plist->statusStr_chid && (ca_state(plist->statusStr_chid) == cs_conn)) {
-				ca_put(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
-				ca_flush_io();
+	if (plist->do_backups) {
+		/*** Write a backup copy of the save file ***/
+		if (backup_state != BS_NEW) {
+			/* make a backup copy */
+			if (myFileCopy(save_file, backup_file) != OK) {
+				errlogPrintf("save_restore:write_save_file - Couldn't make backup '%s' [%s]\n",
+					backup_file, datetime);
+				plist->status = SR_STATUS_WARN;
+				strcpy(plist->statusStr, "Can't write .savB file");
+				TRY_TO_PUT_AND_FLUSH(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
+				sprintf(SR_recentlyStr, "Can't write '%sB'", plist->save_file);
+				return(ERROR);
 			}
-			sprintf(SR_recentlyStr, "Can't write '%sB'", plist->save_file);
-			return(ERROR);
 		}
 	}
+
+	/* Update status PV */
 	if (plist->not_connected) {
 		plist->status = SR_STATUS_WARN;
 		sprintf(plist->statusStr,"%d %s not saved", plist->not_connected, 
 			plist->not_connected==1?"value":"values");
-		if (plist->statusStr_chid && (ca_state(plist->statusStr_chid) == cs_conn)) {
-			ca_put(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
-			ca_flush_io();
-		}
+		TRY_TO_PUT_AND_FLUSH(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
 	}
 	sprintf(SR_recentlyStr, "Wrote '%s'", plist->save_file);
 	return(OK);
@@ -1510,6 +1636,7 @@ STATIC int create_data_set(
 		errlogPrintf("save_restore:create_data_set: channel list calloc failed\n");
 		return(ERROR);
 	}
+	plist->do_backups = 1;	/* Do backups and sequences backups, unless we're told not to. */
 	callbackSetCallback(periodic_save, &plist->periodicCb);
 	callbackSetUser(plist, &plist->periodicCb);
 	callbackSetCallback(on_change_timer, &plist->monitorCb);
@@ -1528,7 +1655,10 @@ STATIC int create_data_set(
 	plist->save_state = 0;
 	plist->save_ok = 0;
 	plist->monitor_period = MAX(mon_period, min_period);
+	/* init times */
 	epicsTimeGetCurrent(&plist->backup_time);
+	epicsTimeGetCurrent(&plist->save_attempt_time);
+	epicsTimeGetCurrent(&plist->save_time);
 	plist->backup_sequence_num = -1;
 	plist->save_ok = 0;
 	plist->not_connected = -1;
@@ -1537,8 +1667,14 @@ STATIC int create_data_set(
 
 	/** construct the save_file name **/
 	strcpy(plist->save_file, plist->reqFile);
+#if 0
 	inx = 0;
 	while ((plist->save_file[inx] != 0) && (plist->save_file[inx] != '.') && (inx < (FN_LEN-6))) inx++;
+#else
+	/* fix bfr 2007-10-01: need to search for last '.', not first */
+	inx = strlen(plist->save_file)-1;
+	while (inx > 0 && plist->save_file[inx] != '.') inx--;
+#endif
 	plist->save_file[inx] = 0;	/* truncate if necessary to leave room for ".sav" + null */
 	strcat(plist->save_file,".sav");
 	/* make full name, including file path */
@@ -1588,10 +1724,14 @@ void save_restoreShow(int verbose)
 	printf("  Current date-time (yymmdd-hhmmss): [%s] \n", datetime);
 	printf("  Status: '%s' - '%s'\n", SR_STATUS_STR[SR_status], SR_statusStr);
 	printf("  Debug level: %d\n", save_restoreDebug);
+#if SET_FILE_PERMISSIONS
+	printf("  File permissions: 0%o\n", (unsigned int)file_permissions);
+#endif
 	printf("  Save/restore incomplete save sets? %s\n", save_restoreIncompleteSetsOk?"YES":"NO");
 	printf("  Write dated backup files? %s\n", save_restoreDatedBackupFiles?"YES":"NO");
 	printf("  Number of sequence files to maintain: %d\n", save_restoreNumSeqFiles);
 	printf("  Time interval between sequence files: %d seconds\n", save_restoreSeqPeriodInSeconds);
+	printf("  Time interval between .sav-file write failure and retry: %d seconds\n", save_restoreRetrySeconds);
 	printf("  NFS host: '%s'; address:'%s'\n", save_restoreNFSHostName, save_restoreNFSHostAddr);
 	printf("  NFS mount status: %s\n",
 		save_restoreNFSOK?"Ok":NFS_managed?"Failed":"not managed by save_restore");
@@ -1625,6 +1765,9 @@ void save_restoreShow(int verbose)
 			if (plist->save_state & CHANGE) strcat(tmpstr, "CHANGE ");
 			if (plist->save_state & MANUAL) strcat(tmpstr, "MANUAL ");
 			strcat(tmpstr, "]");
+			printf("    path PV: %s\n", plist->savePathPV[0]?plist->savePathPV:"None");
+			printf("    name PV: %s\n", plist->saveNamePV[0]?plist->saveNamePV:"None");
+			printf("    backups: %s\n", plist->do_backups?"YES":"NO");
 			printf("    save_state = 0x%x\n", plist->save_state);
 			printf("    period: %d; trigger chan: '%s'; monitor period: %d\n",
 			   plist->period,plist->trigger_channel,plist->monitor_period);
@@ -2106,10 +2249,7 @@ STATIC int readReqFile(const char *reqFile, struct chlist *plist, char *macrostr
 	if (!inp_fd) {
 		plist->status = SR_STATUS_FAIL;
 		strcpy(plist->statusStr, "Can't open .req file");
-		if (plist->statusStr_chid && (ca_state(plist->statusStr_chid) == cs_conn)) {
-			ca_put(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
-			ca_flush_io();
-		}
+		TRY_TO_PUT_AND_FLUSH(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
 		errlogPrintf("save_restore:readReqFile: unable to open file %s. Exiting.\n", reqFile);
 		return(ERROR);
 	}
@@ -2177,10 +2317,7 @@ STATIC int readReqFile(const char *reqFile, struct chlist *plist, char *macrostr
 			if (pchannel == (struct channel *)0) {
 				plist->status = SR_STATUS_WARN;
 				strcpy(plist->statusStr, "Can't alloc channel memory");
-				if (plist->statusStr_chid && (ca_state(plist->statusStr_chid) == cs_conn)) {
-					ca_put(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
-					ca_flush_io();
-				}
+				TRY_TO_PUT_AND_FLUSH(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
 				errlogPrintf("save_restore:readReqFile: channel calloc failed\n");
 			} else {
 				/* add new element to the list */
@@ -2206,6 +2343,21 @@ STATIC int readReqFile(const char *reqFile, struct chlist *plist, char *macrostr
 	}
 	/* close file */
 	fclose(inp_fd);
+
+	/*
+	 * Allow macro string supplied to create_xxx_set() to specify a PV from which the
+	 * path and/or file name will be read when it's time to write the file.  Currently,
+	 * this can only be done when the list is defined.
+	 */
+	if (macGetValue(handle, "SAVEPATHPV", name, 80) > 0) {
+		plist->do_backups = 0;
+		strncpy(plist->savePathPV, name, 80);
+	}
+	if (macGetValue(handle, "SAVENAMEPV", name, 80) > 0) {
+		plist->do_backups = 0;
+		strncpy(plist->saveNamePV, name, 80);
+	}
+
 	if (handle) {
 		macDeleteHandle(handle);
 		if (pairs) free(pairs);
@@ -2393,6 +2545,25 @@ IOCSH_ARG_ARRAY save_restoreSet_status_prefix_Args[1] = {&save_restoreSet_status
 IOCSH_FUNCDEF   save_restoreSet_status_prefix_FuncDef = {"save_restoreSet_status_prefix",1,save_restoreSet_status_prefix_Args};
 static void     save_restoreSet_status_prefix_CallFunc(const iocshArgBuf *args) {save_restoreSet_status_prefix(args[0].sval);}
 
+#if SET_FILE_PERMISSIONS
+/* void save_restoreSet_FilePermissions(int permissions); */
+IOCSH_ARG       save_restoreSet_FilePermissions_Arg0    = {"permissions",iocshArgInt};
+IOCSH_ARG_ARRAY save_restoreSet_FilePermissions_Args[1] = {&save_restoreSet_FilePermissions_Arg0};
+IOCSH_FUNCDEF   save_restoreSet_FilePermissions_FuncDef = {"save_restoreSet_FilePermissions",1,save_restoreSet_FilePermissions_Args};
+static void     save_restoreSet_FilePermissions_CallFunc(const iocshArgBuf *args) {save_restoreSet_FilePermissions(args[0].ival);}
+#endif
+
+/* void save_restoreSet_RetrySeconds(int seconds); */
+IOCSH_ARG       save_restoreSet_RetrySeconds_Arg0    = {"seconds",iocshArgInt};
+IOCSH_ARG_ARRAY save_restoreSet_RetrySeconds_Args[1] = {&save_restoreSet_RetrySeconds_Arg0};
+IOCSH_FUNCDEF   save_restoreSet_RetrySeconds_FuncDef = {"save_restoreSet_RetrySeconds",1,save_restoreSet_RetrySeconds_Args};
+static void     save_restoreSet_RetrySeconds_CallFunc(const iocshArgBuf *args) {save_restoreSet_RetrySeconds(args[0].ival);}
+
+/* void save_restoreSet_UseStatusPVs(int ok); */
+IOCSH_ARG       save_restoreSet_UseStatusPVs_Arg0    = {"ok",iocshArgInt};
+IOCSH_ARG_ARRAY save_restoreSet_UseStatusPVs_Args[1] = {&save_restoreSet_UseStatusPVs_Arg0};
+IOCSH_FUNCDEF   save_restoreSet_UseStatusPVs_FuncDef = {"save_restoreSet_UseStatusPVs",1,save_restoreSet_UseStatusPVs_Args};
+static void     save_restoreSet_UseStatusPVs_CallFunc(const iocshArgBuf *args) {save_restoreSet_UseStatusPVs(args[0].ival);}
 
 void save_restoreRegister(void)
 {
@@ -2421,6 +2592,11 @@ void save_restoreRegister(void)
     iocshRegister(&save_restoreSet_IncompleteSetsOk_FuncDef, save_restoreSet_IncompleteSetsOk_CallFunc);
     iocshRegister(&save_restoreSet_DatedBackupFiles_FuncDef, save_restoreSet_DatedBackupFiles_CallFunc);
     iocshRegister(&save_restoreSet_status_prefix_FuncDef, save_restoreSet_status_prefix_CallFunc);
+#if SET_FILE_PERMISSIONS
+    iocshRegister(&save_restoreSet_FilePermissions_FuncDef, save_restoreSet_FilePermissions_CallFunc);
+#endif
+    iocshRegister(&save_restoreSet_RetrySeconds_FuncDef, save_restoreSet_RetrySeconds_CallFunc);
+    iocshRegister(&save_restoreSet_UseStatusPVs_FuncDef, save_restoreSet_UseStatusPVs_CallFunc);
 }
 
 epicsExportRegistrar(save_restoreRegister);
