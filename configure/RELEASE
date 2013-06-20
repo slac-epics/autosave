@@ -7,6 +7,7 @@ include $(TOP)/RELEASE_SITE
 # ===============================================================
 BASE_MODULE_VERSION=R3.14.12-0.4.0
 EPICS_BASE=$(EPICS_SITE_TOP)/base/$(BASE_MODULE_VERSION)
+-include $(TOP)/configure/EPICS_BASE.$(EPICS_HOST_ARCH)
 
 # ===============================================================
 # Define the version(s) of any other needed modules 
