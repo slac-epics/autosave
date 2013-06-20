@@ -19,17 +19,24 @@ asVerify_LIBS   += Com
 DBD += autosave.dbd
 DBD += autosaveSupport.dbd
 
+#include files
+INC += osdNfs.h
+INC	+= save_restore.h
+
 #===================================================
 # create library for linking will install in <lib>
 #===================================================
+
 LIBRARY_IOC += autosave
 
+#os independent code
 autosave_SRCS += dbrestore.c save_restore.c
 autosave_SRCS += initHooks.c fGetDateStr.c
 
-autosave_LIBS += $(EPICS_BASE_IOC_LIBS)
+#os dependent code
+autosave_SRCS += osdNfs.c
 
-INC	+= save_restore.h
+autosave_LIBS += $(EPICS_BASE_IOC_LIBS)
 
 #=================================================================
 # create munch file for dynamic loading will install in <bin>
