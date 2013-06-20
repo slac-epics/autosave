@@ -57,9 +57,10 @@
  * 08/03/07  tmm  v4.11 Added functions makeAutosaveFileFromDbInfo() and makeAutosaveFiles()
  *                which search through the loaded database, looking for info nodes indicating
  *                fields that are to be autosaved.
+ * 09/11/09  tmm  v4.12 If recordname is an alias (>=3.14.11), don't search for info nodes.
  *                
  */
-#define VERSION "4.11"
+#define VERSION "4.12"
 
 #include	<stdio.h>
 #include	<errno.h>
@@ -90,6 +91,10 @@
 #define OK 0
 #define ERROR -1
 #endif
+
+/* EPICS base version tests.*/
+#define LT_EPICSBASE(v,r,l) ((EPICS_VERSION<=(v)) && (EPICS_REVISION<=(r)) && (EPICS_MODIFICATION<(l)))
+#define GE_EPICSBASE(v,r,l) ((EPICS_VERSION>=(v)) && (EPICS_REVISION>=(r)) && (EPICS_MODIFICATION>=(l)))
 
 STATIC char 	*RESTORE_VERSION = VERSION;
 
@@ -1210,7 +1215,7 @@ long SR_write_array_data(FILE *out_fd, char *name, void *pArray, long num_elemen
 	return(n);
 }
 
-#define BUFSIZE 100
+#define BUFFER_SIZE 100
 /*
  * Look through the database for info nodes with the specified info_name, and get the
  * associated info_value string.  Interpret this string as a list of field names.  Write
@@ -1222,15 +1227,16 @@ void makeAutosaveFileFromDbInfo(char *fileBaseName, char *info_name)
 	DBENTRY		dbentry;
 	DBENTRY		*pdbentry = &dbentry;
 	const char *info_value, delimiters[] = " \t\n\r.";
-	char		buf[BUFSIZE], *field, *fields=buf;
+	char		buf[BUFFER_SIZE], *field, *fields=buf;
 	FILE 		*out_fd;
+	int			searchRecord;
 
 	if (!pdbbase) {
 		errlogPrintf("autosave:makeAutosaveFileFromDbInfo: No Database Loaded\n");
 		return;
 	}
 	if (strstr(fileBaseName, ".req")) {
-		strncpy(buf, fileBaseName, BUFSIZE);
+		strncpy(buf, fileBaseName, BUFFER_SIZE);
 	} else {
 		sprintf(buf, "%s.req", fileBaseName);
 	}
@@ -1245,17 +1251,24 @@ void makeAutosaveFileFromDbInfo(char *fileBaseName, char *info_name)
 	do {
 		/* loop over all records of current type*/
 		dbFirstRecord(pdbentry);
+#if GE_EPICSBASE(3,14,11)
+		searchRecord = dbIsAlias(pdbentry) ? 0 : 1;
+#else
+		searchRecord = 1;
+#endif
 		do {
+			if (searchRecord) {
 			info_value = dbGetInfo(pdbentry, info_name);
 			if (info_value) {
 				/* printf("record %s.autosave = '%s'\n", dbGetRecordName(pdbentry), info_value); */
-				strncpy(fields, info_value, BUFSIZE);
+				strncpy(fields, info_value, BUFFER_SIZE);
 				for (field = strtok(fields, delimiters); field; field = strtok(NULL, delimiters)) {
 					if (dbFindField(pdbentry, field) == 0) {
 						fprintf(out_fd, "%s.%s\n", dbGetRecordName(pdbentry), field);
 					} else {
 						printf("makeAutosaveFileFromDbInfo: %s.%s not found\n", dbGetRecordName(pdbentry), field);
 					}
+				}
 				}
 			}
 		} while (dbNextRecord(pdbentry) == 0);
