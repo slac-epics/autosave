@@ -29,7 +29,7 @@ autosave_SRCS += initHooks.c fGetDateStr.c
 
 autosave_LIBS += $(EPICS_BASE_IOC_LIBS)
 
-INC	+= save_restore.h
+INC	+= save_restore.h fGetDateStr.h
 
 #=================================================================
 # create munch file for dynamic loading will install in <bin>

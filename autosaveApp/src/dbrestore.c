@@ -195,7 +195,7 @@ STATIC int myFileCopy(const char *source, const char *dest)
 }
 
 
-STATIC long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *value_string)
+long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *value_string)
 {
 	long 	n, status = 0;
 	char 	*s;

@@ -22,7 +22,7 @@ DB += SR_test.db
 # ARCHIVE += <file>.substitutions
 # ARCHIVE += <file>.template
 #
-ARCHIVE += archive_SR.substitutions
+# ARCHIVE += archive_SR.substitutions
 ARCHIVE += archive_SR.template
 
 #----------------------------------------------------
