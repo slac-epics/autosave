@@ -57,7 +57,7 @@ extern char SR_STATUS_STR[5][10];
 #define ARRAY_MARKER "@array@"
 #define ARRAY_MARKER_LEN 7
 
-#define FN_LEN 80 /* filename length */
+#define FN_LEN		255 /* filename length */
 #define STRING_LEN MAX_STRING_SIZE	/* EPICS max length for string PV */
 #define PV_NAME_LEN 80 /* string containing a PV name */
 
