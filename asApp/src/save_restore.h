@@ -97,6 +97,7 @@ extern void dbrestoreShow(void);
 extern int create_manual_set(char *filename, char *macrostring);
 extern int reload_manual_set(char * filename, char *macrostring);
 extern int fdbrestore(char *filename);
+extern int request_manual_save( char *request_file, char *save_file );
 extern int set_savefile_name(char *filename, char *save_filename);
 extern void makeNfsPath(char *dest, const char *s1, const char *s2);
 extern long asVerify(char *fileName, int verbose, int debug, int write_restore_file);

@@ -628,7 +628,7 @@ int manual_save(char *request_file, char *save_file, callbackFunc callbackFuncti
 	op_msg msg;
 
 	if (save_restoreDebug) printf("manual_save: request_file='%s', save_file='%s', callbackFunction=%p, puserPvt=%p\n",
-		request_file, save_file, callbackFunction, puserPvt);
+		request_file, save_file?save_file:"NONE", callbackFunction, puserPvt);
 
 	msg.operation = op_SaveFile;
 	strncpy(msg.requestfilename, request_file, OP_MSG_FILENAME_SIZE);
@@ -642,6 +642,12 @@ int manual_save(char *request_file, char *save_file, callbackFunc callbackFuncti
 	msg.callbackFunction = callbackFunction;
 	epicsMessageQueueSend(opMsgQueue, (void *)&msg, OP_MSG_SIZE);
 	return(0);
+}
+
+/* Allow IOC app to request a manual save */
+int request_manual_save( char *request_file, char *save_file )
+{
+	return manual_save( request_file, save_file, NULL, NULL );
 }
 
 
