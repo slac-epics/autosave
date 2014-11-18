@@ -18,8 +18,14 @@ asVerify_LIBS   += Com
 # Trial version that uses dbLoadRecordsHookRegister.
 #USR_CFLAGS += -DDBLOADRECORDSHOOKREGISTER
 
+# ===================================================
 # <name>.dbd will be created from <name>Include.dbd
-DBD += autosave.dbd
+# autosave.dbd is used for the test IOC application
+# uncomment when building PROD_IOC = autosaveTest
+#DBD += autosave.dbd
+# ===================================================
+
+# This is exported for use by external IOC applications
 DBD += autosaveSupport.dbd
 
 #include files
