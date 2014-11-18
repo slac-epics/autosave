@@ -6,7 +6,7 @@ include $(TOP)/configure/CONFIG
 #============================================
 
 PROD_HOST += asVerify
-asVerify_SRCS   += asVerify.c
+asVerify_SRCS   += asVerify.c verify.c
 asVerify_LIBS   += ca
 asVerify_LIBS   += Com
 
@@ -14,6 +14,9 @@ asVerify_LIBS   += Com
 # xxxRecord.h will be created from xxxRecord.dbd
 
 #DBDINC += xxxRecord
+
+# Trial version that uses dbLoadRecordsHookRegister.
+#USR_CFLAGS += -DDBLOADRECORDSHOOKREGISTER
 
 # <name>.dbd will be created from <name>Include.dbd
 DBD += autosave.dbd
@@ -30,6 +33,7 @@ LIBRARY_IOC += autosave
 #os independent code
 autosave_SRCS += dbrestore.c save_restore.c
 autosave_SRCS += initHooks.c fGetDateStr.c
+autosave_SRCS += configMenuSub.c verify.c
 
 #os dependent code
 autosave_SRCS += osdNfs.c
@@ -41,20 +45,40 @@ autosave_LIBS += $(EPICS_BASE_IOC_LIBS)
 #=================================================================
 PROD_IOC = autosaveLib
 
-# The PROD_IOC is built from the same srcs and must include
-# the registry routines.
+# The PROD_IOC must include the registry routines for dynamic loading.
 # <name>_registerRecordDeviceDriver.cpp will be created from <name>.dbd
-#autosaveLib_SRCS += $(autosave_SRCS)
 autosaveLib_SRCS_DEFAULT += autosave_registerRecordDeviceDriver.cpp
 autosaveLib_SRCS_DEFAULT += autosaveMain.cpp
 autosaveLib_SRCS_vxWorks += -nil-
+
 #The following adds support from base/src/vxWorks
 autosaveLib_OBJS_vxWorks += $(EPICS_BASE_BIN)/vxComLibrary
 
 autosaveLib_LIBS += autosave
 autosaveLib_LIBS += $(EPICS_BASE_IOC_LIBS)
-
 #====================================================================
+
+#=================================================================
+# Create an IOC Application for testing within this module
+# Please don't build the following IOC application PROD_IOC
+# for production deployment
+#=================================================================
+
+#PROD_IOC = autosaveTest
+# ======================================================================
+# <name>_registerRecordDeviceDriver.cpp will be created from <name>.dbd
+# =======================================================================
+
+#autosaveTest_SRCS_DEFAULT += autosave_registerRecordDeviceDriver.cpp
+#autosaveTest_SRCS_DEFAULT += autosaveMain.cpp
+#autosaveTest_SRCS_vxWorks += -nil-
+
+#The following adds support from base/src/vxWorks
+#autosaveTest_OBJS_vxWorks += $(EPICS_BASE_BIN)/vxComLibrary
+
+#autosaveTest_LIBS += autosave
+#autosaveTest_LIBS += $(EPICS_BASE_IOC_LIBS)
+# ========================================================================
 
 include $(TOP)/configure/RULES
 #----------------------------------------
