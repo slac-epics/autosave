@@ -843,7 +843,9 @@ int reboot_restore(char *filename, initHookState init_state)
 
 			found_field = 1;
 			if ((status = dbFindRecord(pdbentry, realName)) != 0) {
-				errlogPrintf("dbFindRecord for '%s' failed\n", PVname);
+				if (!save_restoreLogMissingRecords) {
+					errlogPrintf("dbFindRecord for '%s' failed\n", PVname);
+				}
 				num_errors++; found_field = 0;
 			} else if (dbFoundField(pdbentry) == 0) {
 				errlogPrintf("dbrestore:reboot_restore: dbFindRecord did not find field '%s'\n", PVname);

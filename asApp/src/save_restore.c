@@ -342,6 +342,7 @@ STATIC chid	SR_rebootTime_chid;
 volatile int	save_restoreNumSeqFiles = 3;			/* number of sequence files to maintain */
 volatile int	save_restoreSeqPeriodInSeconds = 60;	/* period between sequence-file writes */
 volatile int	save_restoreIncompleteSetsOk = 1;		/* will save/restore incomplete sets? */
+volatile int	save_restoreLogMissingRecords = 1;		/* Log errors on missing records during restore */
 volatile int	save_restoreDatedBackupFiles = 1;		/* save backups as <filename>.bu or <filename>_YYMMDD-HHMMSS */
 volatile int	save_restoreRetrySeconds = 60;			/* Time before retrying write after a failure. */
 volatile int	save_restoreUseStatusPVs = 1;			/* use PVs for status etc. */
@@ -352,6 +353,7 @@ volatile int	save_restoreCallbackTimeout = 600;  /* qiao: if the call back does 
 epicsExportAddress(int, save_restoreNumSeqFiles);
 epicsExportAddress(int, save_restoreSeqPeriodInSeconds);
 epicsExportAddress(int, save_restoreIncompleteSetsOk);
+epicsExportAddress(int, save_restoreLogMissingRecords);
 epicsExportAddress(int, save_restoreDatedBackupFiles);
 epicsExportAddress(int, save_restoreUseStatusPVs);
 epicsExportAddress(int, save_restoreCAReconnect);        /* qiao: export the new variables */
@@ -427,6 +429,7 @@ void save_restoreSet_Debug(int level) {save_restoreDebug = level;}
 void save_restoreSet_NumSeqFiles(int numSeqFiles) {save_restoreNumSeqFiles = numSeqFiles;}
 void save_restoreSet_SeqPeriodInSeconds(int period) {save_restoreSeqPeriodInSeconds = MAX(10, period);}
 void save_restoreSet_IncompleteSetsOk(int ok) {save_restoreIncompleteSetsOk = ok;}
+void save_restoreSet_LogMissingRecords(int ok) {save_restoreLogMissingRecords = ok;}
 void save_restoreSet_DatedBackupFiles(int ok) {save_restoreDatedBackupFiles = ok;}
 void save_restoreSet_status_prefix(char *prefix) {strncpy(status_prefix, prefix, 29);}
 #if SET_FILE_PERMISSIONS

@@ -87,6 +87,7 @@ extern long SR_put_array_values(char *PVname, void *p_data, long num_values);
 #define PATH_SIZE 255		/* max size of the complete path to one file */
 
 extern volatile int save_restoreIncompleteSetsOk;
+extern volatile int save_restoreLogMissingRecords;
 extern char saveRestoreFilePath[];              /* path to save files */
 extern volatile int save_restoreNumSeqFiles;
 extern volatile int save_restoreDebug;
