@@ -8,6 +8,7 @@ extern "C" {
 /* save_restore.h */
 
 #include <ellLib.h> /* pass0List, pass1List */
+#include <initHooks.h>
 
 #define STATIC_VARS 0
 #define DEBUG 1
@@ -51,6 +52,7 @@ extern char SR_STATUS_STR[5][10];
 #define DOUBLE_FMT "%.14g"
 
 #define BUF_SIZE 120
+#define EBUF_SIZE BUF_SIZE*2
 #define ARRAY_BEGIN '{'
 #define ARRAY_END '}'
 #define ELEMENT_BEGIN '\"'
@@ -68,10 +70,11 @@ struct restoreFileListItem {
 	char *filename;
 	long restoreStatus;
 	char *restoreStatusStr;
+	char *macrostring;
 };
 
-ELLLIST pass0List;
-ELLLIST pass1List;
+extern ELLLIST pass0List;
+extern ELLLIST pass1List;
 
 extern void maybeInitRestoreFileLists();
 
@@ -101,12 +104,21 @@ extern int fdbrestore(char *filename);
 extern int request_manual_save( char *request_file, char *save_file );
 extern int set_savefile_name(char *filename, char *save_filename);
 extern void makeNfsPath(char *dest, const char *s1, const char *s2);
-extern long asVerify(char *fileName, int verbose, int debug, int write_restore_file);
+extern long asVerify(char *fileName, int verbose, int debug, int write_restore_file, char *restoreFileName);
 
 extern int	save_restoreNFSOK;
 extern int	save_restoreIoErrors;
 extern volatile int	save_restoreRemountThreshold;
 
+extern int reboot_restore(char *filename, initHookState init_state);
+extern int set_pass0_restoreFile(char *filename, char *macrostring);
+extern int set_pass1_restoreFile(char *filename, char *macrostring);
+extern struct restoreList restoreFileList;
+extern int isAbsolute(const char* filename);
+
+extern int openReqFile(const char *reqFile, FILE **fpp);
+extern int eraseFile(const char *filename);
+extern int appendToFile(const char *filename, const char *line);
 
 /* strncpy sucks (may copy extra characters, may not null-terminate) */
 #define strNcpy(dest, src, N) {			\

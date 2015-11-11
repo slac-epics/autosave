@@ -86,6 +86,9 @@
 #include	"save_restore.h"
 #include	<epicsExport.h>
 #include	<special.h>
+#include	<macLib.h>
+#include	<epicsString.h>
+#include	<dbAccessDefs.h>
 
 #ifndef vxWorks
 #define OK 0
@@ -96,9 +99,10 @@
 #define LT_EPICSBASE(v,r,l) ((EPICS_VERSION<=(v)) && (EPICS_REVISION<=(r)) && (EPICS_MODIFICATION<(l)))
 #define GE_EPICSBASE(v,r,l) ((EPICS_VERSION>=(v)) && (EPICS_REVISION>=(r)) && (EPICS_MODIFICATION>=(l)))
 
-STATIC char 	*RESTORE_VERSION = VERSION;
-
 int restoreFileListsInitialized=0;
+
+ELLLIST pass0List;
+ELLLIST pass1List;
 
 void myPrintErrno(char *s, char *file, int line) {
 	errlogPrintf("%s(%d): [0x%x]=%s:%s\n", file, line, errno, s, strerror(errno));
@@ -134,12 +138,13 @@ void dbrestoreShow(void)
 
 	maybeInitRestoreFileLists();
 
-	printf("  '     filename     ' -  status  - 'message'\n");
+	printf("  '     filename     ' -  status  - 'message' - 'macro string'\n");
 	printf("  pass 0:\n");
 	pLI = (struct restoreFileListItem *) ellFirst(&pass0List);
 	while (pLI) {
-		printf("  '%s' - %s - '%s'\n", pLI->filename,
-			SR_STATUS_STR[pLI->restoreStatus], pLI->restoreStatusStr);
+		printf("  '%s' - %s - '%s' - '%s'\n", pLI->filename,
+			SR_STATUS_STR[pLI->restoreStatus], pLI->restoreStatusStr,
+			pLI->macrostring ? pLI->macrostring : "None");
 		pLI = (struct restoreFileListItem *) ellNext(&(pLI->node));
 	}
 
@@ -276,6 +281,10 @@ STATIC long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *valu
 				/* record initilization may have changed the field type */
 				field_type = paddr->field_type;
 				if (field_type <= DBF_MENU) {
+					if (save_restoreDebug > 1) {
+						errlogPrintf("dbrestore:scalar_restore: calling dbFastPutConvertRoutine for field (%s), type %d, with value '%s'.\n",
+							PVname, field_type, value_string);
+					}
 					status = (*dbFastPutConvertRoutine[DBR_STRING][field_type])
 						(value_string, paddr->pfield, paddr);
 					if (status) {
@@ -421,6 +430,7 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string, 
 			if (p_data) free(p_data);
 			p_data = (void *)calloc(max_elements, field_size);
 			p_data_size = p_data ? max_elements * field_size : 0;
+			if (save_restoreDebug >= 10) errlogPrintf("dbrestore:SR_array_restore: allocated p_data = %p, p_data_size = %ld\n", p_data, p_data_size);
 		} else {
 			memset(p_data, 0, p_data_size);
 		}
@@ -452,7 +462,87 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string, 
 	if (save_restoreDebug >= 11) {
 		errlogPrintf("dbrestore:SR_array_restore: parsing buffer '%s'\n", value_string);
 	}
-	if ((bp = strchr(value_string, (int)ARRAY_BEGIN)) != NULL) {
+
+	if (value_string==NULL || *value_string=='\0') {
+		if (save_restoreDebug >= 11) {
+			errlogPrintf("dbrestore:SR_array_restore: value_string is null or empty\n");
+		}
+		/* nothing to write; write zero or "" */
+		if (p_data) {
+			switch (field_type) {
+			case DBF_STRING:
+				strcpy(p_char, "");
+				break;
+			case DBF_ENUM: case DBF_USHORT: case DBF_MENU:
+				p_ushort[num_read++] = (unsigned short)0;
+				break;
+			case DBF_UCHAR:
+				p_uchar[num_read++] = (unsigned char)0;
+				break;
+			case DBF_CHAR:
+				p_char[num_read++] = (char)0;
+				break;
+			case DBF_SHORT:
+				p_short[num_read++] = (short)0;
+				break;
+			case DBF_LONG:
+				p_long[num_read++] = (epicsInt32) 0;
+				break;
+			case DBF_ULONG:
+				p_ulong[num_read++] = (epicsUInt32) 0;
+				break;
+			case DBF_FLOAT:
+				p_float[num_read++] = 0;
+				break;
+			case DBF_DOUBLE:
+				p_double[num_read++] = 0;
+				break;
+			case DBF_NOACCESS:
+			default:
+				break;
+			}
+		}
+	} else if ((bp = strchr(value_string, (int)ARRAY_BEGIN)) == NULL) {
+		if (save_restoreDebug >= 11) {
+			errlogPrintf("dbrestore:SR_array_restore: ARRAY_BEGIN not found\n");
+		}
+		/* doesn't look like array data.  just restore what we have */
+		if (p_data) {
+			switch (field_type) {
+			case DBF_STRING:
+				/* future: translate escape sequence */
+				strncpy(&(p_char[(num_read++)*MAX_STRING_SIZE]), value_string, MAX_STRING_SIZE);
+				break;
+			case DBF_ENUM: case DBF_USHORT: case DBF_MENU:
+				p_ushort[num_read++] = (unsigned short)atol(value_string);
+				break;
+			case DBF_UCHAR:
+				p_uchar[num_read++] = (unsigned char)atol(value_string);
+				break;
+			case DBF_CHAR:
+				p_char[num_read++] = (char)atol(value_string);
+				break;
+			case DBF_SHORT:
+				p_short[num_read++] = (short)atol(value_string);
+				break;
+			case DBF_LONG:
+				p_long[num_read++] = (epicsInt32) atol(value_string);
+				break;
+			case DBF_ULONG:
+				p_ulong[num_read++] = (epicsUInt32) strtoul(value_string,NULL,0);
+				break;
+			case DBF_FLOAT:
+				p_float[num_read++] = mySafeDoubleToFloat(atof(value_string));
+				break;
+			case DBF_DOUBLE:
+				p_double[num_read++] = atof(value_string);
+				break;
+			case DBF_NOACCESS:
+			default:
+				break;
+			}
+		}
+	} else if ((bp = strchr(value_string, (int)ARRAY_BEGIN)) != NULL) {
 		begin_mark_found = 1;
 		if (save_restoreDebug >= 10) {
 			errlogPrintf("dbrestore:SR_array_restore: parsing array buffer '%s'\n", bp);
@@ -462,7 +552,9 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string, 
 			if (save_restoreDebug >= 10) {
 				errlogPrintf("dbrestore:SR_array_restore: looking for element[%ld] \n", num_read);
 			}
-			while ((*bp != ELEMENT_BEGIN) && !end_mark_found && !end_of_file) {
+			/* If truncated-file detector (checkFile) fails, test for end of file before
+			 * using *bp */
+			while (!end_mark_found && !end_of_file && (*bp != ELEMENT_BEGIN)) {
 				if (save_restoreDebug >= 12) {
 					errlogPrintf("dbrestore:SR_array_restore: ...buffer contains '%s'\n", bp);
 				}
@@ -491,6 +583,7 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string, 
 					errlogPrintf("dbrestore:SR_array_restore: Found element-begin; buffer contains '%s'\n", bp);
 				}
 				for (bp++, j=0; (j < MAX_STRING_SIZE-1) && (*bp != ELEMENT_END); bp++) {
+					if (save_restoreDebug >= 11) errlogPrintf("dbrestore:SR_array_restore: *bp=%c (%d)\n", *bp, (int)*bp);
 					if (*bp == '\0') {
 						if ((bp = fgets(buffer, BUF_SIZE, inp_fd)) == NULL) {
 							errlogPrintf("save_restore:array_restore: *** premature EOF.\n");
@@ -517,7 +610,7 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string, 
 				 * If there are more characters than we can handle, just pretend we read them.
 				 */
 				/* *bp == ELEMENT_END ,*/
-					for (found = 0; (found == 0) && !end_of_file; ) {
+				for (found = 0; (found == 0) && !end_of_file; ) {
 					while (*bp && (*bp != ELEMENT_END) && (*bp != ESCAPE)) bp++;
 					switch (*bp) {
 					case ELEMENT_END:
@@ -600,7 +693,7 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string, 
 					break;
 				}
 			}
-			errlogPrintf("save_restore: end of array values.\n\n");
+			errlogPrintf("save_restore: end of %ld array values.\n\n", num_read);
 			epicsThreadSleep(0.5);
 		}
 
@@ -623,11 +716,14 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string, 
 				if (in_element && (bp[1] == ELEMENT_END)) bp++; /* two chars treated as one */
 				break;
 			case ARRAY_END:
+				if (save_restoreDebug >= 10) {
+					errlogPrintf("dbrestore:SR_array_restore: found ARRAY_END.  in_element=%d\n", in_element);
+				}
 				if (!in_element) end_mark_found = 1;
 				break;
 			case '\0':
 				if ((bp = fgets(buffer, BUF_SIZE, inp_fd)) == NULL) {
-					errlogPrintf("save_restore: *** EOF during array-end search\n");
+					errlogPrintf("dbrestore:SR_array_restore: *** EOF during array-end search\n");
 					end_of_file = 1;
 				}
 				break;
@@ -640,15 +736,13 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string, 
 		}
 	} else {
 		if (save_restoreDebug >= 10) {
-			errlogPrintf("dbrestore:SR_array_restore: ARRAY_BEGIN wasn't found; going to next line of input file\n");
-		}
-		status = -1;
-		/* just get next line, assuming it contains the next PV */
-		if (!end_of_file) {
-			if ((bp = fgets(buffer, BUF_SIZE, inp_fd)) == NULL) end_of_file = 1;
+			errlogPrintf("dbrestore:SR_array_restore: ARRAY_BEGIN wasn't found.\n");
 		}
 	}
-	if (!status && end_of_file) status = end_of_file;
+	if (!status && end_of_file) {
+		status = end_of_file;
+		errlogPrintf("dbrestore:SR_array_restore: status = end_of_file.\n");
+	}
 
 	if (gobble) {
 		if (save_restoreDebug >= 1) {
@@ -667,6 +761,7 @@ long SR_array_restore(int pass, FILE *inp_fd, char *PVname, char *value_string, 
 		} else {
 			if (save_restoreDebug >= 1) {
 				errlogPrintf("dbrestore:SR_array_restore: No array write to database attempted because of error condition\n");
+				errlogPrintf("dbrestore:SR_array_restore: status=%ld, p_data=%p\n", status, p_data);
 			}
 		}
 	}
@@ -701,6 +796,7 @@ int reboot_restore(char *filename, initHookState init_state)
 	char		PVname[81]; /* Must be greater than max field width ("%80s") in the sscanf format below */
 	char		bu_filename[PATH_SIZE+1], fname[PATH_SIZE+1] = "";
 	char		buffer[BUF_SIZE], *bp;
+	char		ebuffer[EBUF_SIZE]; /* make room for macro expansion */
 	char		value_string[BUF_SIZE];
 	char		datetime[32];
 	char		c;
@@ -715,9 +811,12 @@ int reboot_restore(char *filename, initHookState init_state)
 	char		realName[64];	/* name without trailing '$' */
 	int			is_long_string;
 	struct restoreFileListItem *pLI;
+	/* macrostring */
+	MAC_HANDLE	*handle = NULL;
+	char		**pairs = NULL;
+	char		*macrostring = NULL;
 
 	errlogPrintf("reboot_restore: entry for file '%s'\n", filename);
-	printf("reboot_restore (v%s): entry for file '%s'\n", RESTORE_VERSION, filename);
 	/* initialize database access routines */
 	if (!pdbbase) {
 		errlogPrintf("reboot_restore: No Database Loaded\n");
@@ -738,6 +837,7 @@ int reboot_restore(char *filename, initHookState init_state)
 		if (pLI->filename && (strcmp(filename, pLI->filename) == 0)) {
 			pStatusVal = &(pLI->restoreStatus);
 			statusStr = pLI->restoreStatusStr;
+			macrostring = pLI->macrostring;
 			break;
 		}
 		pLI = (struct restoreFileListItem *) ellNext(&(pLI->node));
@@ -752,7 +852,11 @@ int reboot_restore(char *filename, initHookState init_state)
 	}
 
 	/* open file */
-	makeNfsPath(fname, saveRestoreFilePath, filename);
+	if (isAbsolute(filename)) {
+		strncpy(fname, filename, PATH_SIZE);
+	} else {
+		makeNfsPath(fname, saveRestoreFilePath, filename);
+	}
 	errlogPrintf("*** restoring from '%s' at initHookState %d (%s record/device init) ***\n",
 		fname, (int)init_state, pass ? "after" : "before");
 	if ((inp_fd = fopen_and_check(fname, &status)) == NULL) {
@@ -767,6 +871,20 @@ int reboot_restore(char *filename, initHookState init_state)
 		if (statusStr) strcpy(statusStr, "Bad .sav(B) files; used seq. backup");
 	}
 
+	/* Prepare to use macro substitution */
+	if (macrostring && macrostring[0]) {
+		macCreateHandle(&handle, NULL);
+		if (handle) {
+			macParseDefns(handle, macrostring, &pairs);
+			if (pairs) macInstallMacros(handle, pairs);
+			if (save_restoreDebug >= 5) {
+				errlogPrintf("save_restore:reboot_restore: Current macro definitions:\n");
+				macReportMacros(handle);
+				errlogPrintf("save_restore:reboot_restore: --------------------------\n");
+			}
+		}
+	}
+
 	(void)fgets(buffer, BUF_SIZE, inp_fd); /* discard header line */
 	if (save_restoreDebug >= 1) {
 		errlogPrintf("dbrestore:reboot_restore: header line '%s'\n", buffer);
@@ -777,6 +895,16 @@ int reboot_restore(char *filename, initHookState init_state)
 	/* restore from data file */
 	num_errors = 0;
 	while ((bp=fgets(buffer, BUF_SIZE, inp_fd))) {
+		if (handle && pairs) {
+			ebuffer[0] = '\0';
+			macExpandString(handle, buffer, ebuffer, EBUF_SIZE);
+			bp = ebuffer;
+			if (save_restoreDebug >= 5) {
+				printf("dbrestore:reboot_restore: buffer='%s'\n", buffer);
+				printf("                         ebuffer='%s'\n", ebuffer);
+			}
+		}
+
 		/*
 		 * get PV_name, one space character, value
 		 * (value may be a string with leading whitespace; it may be
@@ -817,12 +945,25 @@ int reboot_restore(char *filename, initHookState init_state)
 			if (strchr(PVname,'.') == 0) strcat(PVname,".VAL"); /* if no field name, add default */
 			is_scalar = strncmp(value_string, ARRAY_MARKER, ARRAY_MARKER_LEN);
 			if (save_restoreDebug > 9) errlogPrintf("\n");
+			if (is_scalar) {
+				long num_elements, field_size, field_type;
+				/* check the field itself, because an empty string is saved as no value at all , which would look like a scalar. */
+				SR_get_array_info(PVname, &num_elements, &field_size, &field_type);
+				if (num_elements > 1) {
+					if (save_restoreDebug >= 5) {
+						printf("reboot_restore: PV '%s' is scalar in .sav file, but has %ld elements.  Treating as array.\n",
+							PVname, num_elements);
+					}
+					is_scalar = 0;
+				}
+			}
 			if (save_restoreDebug >= 10) {
 				errlogPrintf("dbrestore:reboot_restore: Attempting to put %s '%s' to '%s'\n",
 					is_scalar?"scalar":"array", value_string, PVname);
 			}
 
 			/* dbStatic doesn't know about long-string fields (PV name with appended '$'). */
+			is_long_string = 0;
 			strcpy(realName, PVname);
 			if (realName[strlen(realName)-1] == '$') {
 				realName[strlen(realName)-1] = '\0';
@@ -832,13 +973,22 @@ int reboot_restore(char *filename, initHookState init_state)
 					/* No, we didn't.  One more read will certainly accumulate a value string of length BUF_SIZE */
 					if (save_restoreDebug > 9) printf("reboot_restore: did not reach end of line for long-string PV\n");
 					bp = fgets(buffer, BUF_SIZE, inp_fd);
+					if (handle && pairs) {
+						ebuffer[0] = '\0';
+						macExpandString(handle, buffer, ebuffer, EBUF_SIZE);
+						bp = ebuffer;
+						if (save_restoreDebug >= 1) {
+							printf("dbrestore:reboot_restore: buffer='%s'\n", buffer);
+							printf("                         ebuffer='%s'\n", ebuffer);
+						}
+					}
 					n = BUF_SIZE-strlen(value_string)-1;
 					strncat(value_string, bp, n);
 					/* we don't want that '\n' in the string */
 					if (value_string[strlen(value_string)-1] == '\n') value_string[strlen(value_string)-1] = '\0';
 				}
-				/* Discard additional characters until end of line */
-				while (bp[strlen(bp)-1] != '\n') fgets(buffer, BUF_SIZE, inp_fd);
+				/* We aren't prepared to handle more than BUF_SIZE characters.  Discard additional characters until end of line */
+				while (bp[strlen(bp)-1] != '\n') bp = fgets(buffer, BUF_SIZE, inp_fd);
 			}
 
 			found_field = 1;
@@ -852,7 +1002,7 @@ int reboot_restore(char *filename, initHookState init_state)
 				num_errors++; found_field = 0;
 			}
 			if (found_field) {
-				if (is_scalar) {
+				if (is_scalar || is_long_string) {
 					status = scalar_restore(pass, pdbentry, PVname, value_string);
 				} else {
 					status = SR_array_restore(pass, inp_fd, PVname, value_string, 0);
@@ -881,6 +1031,8 @@ int reboot_restore(char *filename, initHookState init_state)
 			if (!save_restoreIncompleteSetsOk) {
 				errlogPrintf("aborting restore\n");
 				fclose(inp_fd);
+				if (handle) macDeleteHandle(handle);
+				if (pairs) free(pairs);
 				dbFinishEntry(pdbentry);
 				if (pStatusVal) *pStatusVal = SR_STATUS_FAIL;
 				if (statusStr) strcpy(statusStr, "restore aborted");
@@ -892,6 +1044,8 @@ int reboot_restore(char *filename, initHookState init_state)
 		}
 	}
 	fclose(inp_fd);
+	if (handle) macDeleteHandle(handle);
+	if (pairs) free(pairs);
 	dbFinishEntry(pdbentry);
 
 	/* If this is the second pass for a restore file, don't write backup file again.*/
@@ -906,6 +1060,9 @@ int reboot_restore(char *filename, initHookState init_state)
 			pLI = (struct restoreFileListItem *) ellNext(&(pLI->node));
 		}
 	}
+
+	/* For now, don't write boot-time backups for files specified with full path. */
+	if (isAbsolute(filename)) write_backup = 0;
 
 	if (write_backup) {
 		/* write  backup file*/
@@ -952,7 +1109,7 @@ int reboot_restore(char *filename, initHookState init_state)
 }
 
 
-static int set_restoreFile(int pass, char *filename)
+static int set_restoreFile(int pass, char *filename, char *macrostring)
 {
 	struct restoreFileListItem *pLI;
 
@@ -981,6 +1138,12 @@ static int set_restoreFile(int pass, char *filename)
 	}
 	strcpy(pLI->restoreStatusStr, "Unknown, probably failed");
 
+	if (macrostring && macrostring[0]) {
+		pLI->macrostring = (char *)calloc(strlen(macrostring),sizeof(char));
+		strcpy(pLI->macrostring, macrostring);
+	}
+
+
 	pLI->restoreStatus = SR_STATUS_INIT;
 
 	if (pass==1) {
@@ -991,14 +1154,14 @@ static int set_restoreFile(int pass, char *filename)
 	return(OK);
 }
 
-int set_pass0_restoreFile(char *filename)
+int set_pass0_restoreFile(char *filename, char *macrostring)
 {
-	return(set_restoreFile(0, filename));
+	return(set_restoreFile(0, filename, macrostring));
 }
 
-int set_pass1_restoreFile(char *filename)
+int set_pass1_restoreFile(char *filename, char *macrostring)
 {
-	return(set_restoreFile(1, filename));
+	return(set_restoreFile(1, filename, macrostring));
 }
 
 /* file is ok if it ends in either of the two following ways:
@@ -1014,6 +1177,8 @@ FILE *checkFile(const char *file)
 	char datetime[32];
 	int status;
 
+	if (save_restoreDebug >= 2) printf("checkFile: entry\n");
+
 	if ((inp_fd = fopen(file, "r")) == NULL) {
 		errlogPrintf("save_restore: Can't open file '%s'.\n", file);
 		return(0);
@@ -1021,7 +1186,8 @@ FILE *checkFile(const char *file)
 
 	/* Get the version number of the code that wrote the file */
 	fgets(tmpstr, 29, inp_fd);
-	versionstr = strchr(tmpstr,(int)'V');
+	versionstr = strchr(tmpstr,(int)'R');
+	if (!versionstr) versionstr = strchr(tmpstr,(int)'V');
 	if (!versionstr) {
 		/* file has no version number */
 		status = fseek(inp_fd, 0, SEEK_SET); /* go to beginning */
@@ -1032,6 +1198,7 @@ FILE *checkFile(const char *file)
 		version = atof(versionstr+1);
 	else
 		version = 0;
+	if (save_restoreDebug >= 2) printf("checkFile: version=%f\n", version);
 
 	/* <END> check started in v1.8 */
 	if (version < 1.8) {
@@ -1043,6 +1210,7 @@ FILE *checkFile(const char *file)
 	status = fseek(inp_fd, -6, SEEK_END);
 	if (status) myPrintErrno("checkFile: fseek error ", __FILE__, __LINE__);
 	fgets(tmpstr, 6, inp_fd);
+	if (save_restoreDebug >= 5) printf("checkFile: files ends with '%s'\n", tmpstr);
 	if (strncmp(tmpstr, "<END>", 5) == 0) {
 		status = fseek(inp_fd, 0, SEEK_SET); /* file is ok.  go to beginning */
 		if (status) myPrintErrno("checkFile: fseek error ", __FILE__, __LINE__);
@@ -1052,6 +1220,7 @@ FILE *checkFile(const char *file)
 	status = fseek(inp_fd, -7, SEEK_END);
 	if (status) myPrintErrno("checkFile: fseek error ", __FILE__, __LINE__);
 	fgets(tmpstr, 7, inp_fd);
+	if (save_restoreDebug >= 5) printf("checkFile: files ends with '%s'\n", tmpstr);
 	if (strncmp(tmpstr, "<END>", 5) == 0) {
 		status = fseek(inp_fd, 0, SEEK_SET); /* file is ok.  go to beginning */
 		if (status) myPrintErrno("checkFile: fseek error ", __FILE__, __LINE__);
@@ -1085,6 +1254,7 @@ FILE *fopen_and_check(const char *fname, long *status)
 	*status = 0;	/* presume success */
 	strncpy(file, fname, PATH_SIZE);
 	inp_fd = checkFile(file);
+	if (save_restoreDebug >=1) printf("fopen_and_check: checkFile returned %p\n", inp_fd);
 	if (inp_fd) return(inp_fd);
 
 	/* Still here?  Try the backup file. */
@@ -1145,7 +1315,7 @@ FILE *fopen_and_check(const char *fname, long *status)
 
 	errlogPrintf("save_restore: Can't find a file to restore from...\n");
 	errlogPrintf("save_restore: ...last tried '%s'. I give up.\n", file);
-	errlogPrintf("save_restore: **********************************\n\n");
+	printf("save_restore: **********************************\n\n");
 	return(0);
 }
 
@@ -1367,25 +1537,202 @@ void makeAutosaveFileFromDbInfo(char *fileBaseName, char *info_name)
 	return;
 }
 
+/**************************************************************************/
+/* support for building autosave-request files automatically from dbLoadRecords, dbLoadTemplate */
+
+int eraseFile(const char *filename) {
+	FILE *fd;
+	char *fname;
+
+	fname = macEnvExpand(filename);
+	if (fname == NULL) {
+		printf("save_restore:eraseFile: macEnvExpand('%s') returned NULL\n", filename);
+		return(ERROR);
+	}
+	if ((fd = fopen(fname, "w")) != NULL) {
+		fclose(fd);
+	}
+	free(fname);
+	return(0);
+}
+
+int appendToFile(const char *filename, const char *line) {
+	FILE *fd;
+	char *fname;
+	int status=0;
+
+	fname = macEnvExpand(filename);
+	if (fname == NULL) {
+		printf("save_restore:appendToFile: macEnvExpand('%s') returned NULL\n", filename);
+		return(ERROR);
+	}
+	if ((fd = fopen(fname, "a")) != NULL) {
+		fprintf(fd, "%s\n", line);
+		fclose(fd);
+	} else {
+		errlogPrintf("save_restore:appendToFile: Can't open file '%s'\n", fname);
+		status = -1;
+	}
+	free(fname);
+	return(status);
+}
+
+#ifdef DBLOADRECORDSHOOKREGISTER
+static DB_LOAD_RECORDS_HOOK_ROUTINE previousHook=NULL;
+#endif
+static ELLLIST buildInfoList = ELLLIST_INIT;
+
+struct buildInfoItem {
+	ELLNODE node;
+	char *filename;
+	char *suffix;
+	int enabled;
+};
+
+static int autosaveBuildInitialized=0;
+#define MAXSTRING 300
+static char requestFileCmd[MAXSTRING];
+static char requestFileBase[MAXSTRING];
+static char requestFileName[MAXSTRING];
+static char macroString[MAXSTRING], emacroString[MAXSTRING];
+static void myDbLoadRecordsHook(const char* dbFileName, const char* macro) {
+	struct buildInfoItem *pitem;
+	char *p;
+	int n;
+	MAC_HANDLE      *handle = NULL;
+	char            **pairs = NULL;
+
+	if (save_restoreDebug >= 5) {
+		printf("myDbLoadRecordsHook: dbFileName='%s'; subs='%s'\n", dbFileName, macroString);
+	}
+
+#ifdef DBLOADRECORDSHOOKREGISTER
+	if (previousHook) previousHook(dbFileName, macro);
+#endif
+
+	/* Should probably call basename(), but is it available on Windows? */
+	p = strrchr(dbFileName, (int)'/');
+	if (p==NULL) p = strrchr(dbFileName, (int)'\\');
+	if (p) {
+		strncpy(requestFileBase, p+1, MAXSTRING-strlen(requestFileBase)-1);
+	} else {
+		strncpy(requestFileBase, dbFileName, MAXSTRING-strlen(requestFileBase)-1);
+	}
+	p = strstr(requestFileBase, ".db");
+	if (p == NULL) p = strstr(requestFileBase, ".vdb");
+	if (p == NULL) p = strstr(requestFileBase, ".template");
+	if (p == NULL) {
+		printf("myDbLoadRecordsHook: Can't make request-file name from '%s'\n", dbFileName);
+		return;
+	}
+	*p = '\0';
+
+	pitem = (struct buildInfoItem *)ellFirst(&buildInfoList);
+	for (; pitem; pitem = (struct buildInfoItem *)ellNext(&(pitem->node)) ) {
+		if (pitem->enabled) {
+			n = snprintf(requestFileName, MAXSTRING, "%s%s", requestFileBase, pitem->suffix);
+			if ((n < MAXSTRING) && (openReqFile(requestFileName, NULL))) {
+				if (save_restoreDebug >= 5) {
+					printf("myDbLoadRecordsHook: found '%s'\n", requestFileName);
+				}
+				/* Expand any internal macros in macroString e.g., "N=1,M=m$(N)" */
+				macCreateHandle(&handle, NULL);
+				macSuppressWarning(handle, 1);
+				strcpy(macroString, macro);
+				if (handle) {
+					macParseDefns(handle, macroString, &pairs);
+					if (pairs) {
+						macInstallMacros(handle, pairs);
+						emacroString[0] = '\0';
+						macExpandString(handle, macroString, emacroString, MAXSTRING-1);
+						strcpy(macroString, emacroString);
+					}
+				}
+				n = snprintf(requestFileCmd, MAXSTRING, "file %s %s", requestFileName, macroString);
+				if (n < MAXSTRING) appendToFile(pitem->filename, requestFileCmd);
+			}
+		}
+	}
+}
+
+int autosaveBuild(char *filename, char *reqFileSuffix, int on) {
+
+	struct buildInfoItem *pitem;
+	int fileFound = 0, itemFound = 0;
+
+	if (!autosaveBuildInitialized) {
+		autosaveBuildInitialized = 1;
+#ifdef DBLOADRECORDSHOOKREGISTER
+        previousHook = dbLoadRecordsHook;
+        dbLoadRecordsHook = myDbLoadRecordsHook;
+#else
+		printf("pretending to register a dbLoadRecords hook\n");
+#endif
+	}
+	if (!filename || filename[0]==0) {
+		printf("autosaveBuild: bad filename\n");
+		return(-1);
+	}
+
+	pitem = (struct buildInfoItem *)ellFirst(&buildInfoList);
+	for (; pitem; pitem = (struct buildInfoItem *)ellNext(&(pitem->node)) ) {
+		if ((pitem->filename && strcmp(pitem->filename, filename)==0)) {
+			fileFound = 1;
+			if ((pitem->suffix && (reqFileSuffix==NULL || reqFileSuffix[0]=='*' ||
+					strcmp(pitem->suffix, reqFileSuffix)==0))) {
+				/* item exists */
+				if (save_restoreDebug) {
+					printf("autosaveBuild: %s filename '%s' and suffix '%s'.\n",
+					on ? "enabled" : "disabled", filename, pitem->suffix);
+				}
+				pitem->enabled = on;
+				itemFound = 1;
+			}
+		}
+		if (itemFound) return(0);
+	}
+
+	if (!reqFileSuffix || reqFileSuffix[0]==0) {
+		printf("autosaveBuild: bad suffix\n");
+		return(-1);
+	}
+
+	/* If this is the first mention of filename, erase the file */
+	if (!fileFound) eraseFile(filename);
+	pitem = (struct buildInfoItem *)calloc(1, sizeof(struct buildInfoItem));
+	ellAdd(&buildInfoList, &(pitem->node));
+	pitem->filename = epicsStrDup(filename);
+	pitem->suffix = epicsStrDup(reqFileSuffix);
+	pitem->enabled = on;
+	if (save_restoreDebug) {
+	 	printf("autosaveBuild: initialized and %s filename '%s' and suffix '%s'.\n",
+		pitem->enabled ? "enabled" : "disabled", pitem->filename, pitem->suffix);
+	}
+	return(0);
+}
+
+/**************************************************************************/
+
 void makeAutosaveFiles() {
     makeAutosaveFileFromDbInfo("info_settings.req", "autosaveFields");
     makeAutosaveFileFromDbInfo("info_positions.req", "autosaveFields_pass0");
 }
 
 /* set_pass0_restoreFile() */
-STATIC const iocshArg set_passN_Arg = {"file",iocshArgString};
-STATIC const iocshArg * const set_passN_Args[1] = {&set_passN_Arg};
-STATIC const iocshFuncDef set_pass0_FuncDef = {"set_pass0_restoreFile",1,set_passN_Args};
+STATIC const iocshArg set_passN_Arg1 = {"file",iocshArgString};
+STATIC const iocshArg set_passN_Arg2 = {"macrostring",iocshArgString};
+STATIC const iocshArg * const set_passN_Args[2] = {&set_passN_Arg1, &set_passN_Arg2};
+STATIC const iocshFuncDef set_pass0_FuncDef = {"set_pass0_restoreFile",2,set_passN_Args};
 STATIC void set_pass0_CallFunc(const iocshArgBuf *args)
 {
-    set_pass0_restoreFile(args[0].sval);
+    set_pass0_restoreFile(args[0].sval, args[1].sval);
 }
 
 /* set_pass1_restoreFile() */
-STATIC const iocshFuncDef set_pass1_FuncDef = {"set_pass1_restoreFile",1,set_passN_Args};
+STATIC const iocshFuncDef set_pass1_FuncDef = {"set_pass1_restoreFile",2,set_passN_Args};
 STATIC void set_pass1_CallFunc(const iocshArgBuf *args)
 {
-    set_pass1_restoreFile(args[0].sval);
+    set_pass1_restoreFile(args[0].sval, args[1].sval);
 }
 
 /* void dbrestoreShow(void) */
@@ -1412,6 +1759,37 @@ STATIC void makeAutosaveFiles_CallFunc(const iocshArgBuf *args)
     makeAutosaveFiles();
 }
 
+/* int eraseFile(char *filename) */
+STATIC const iocshArg eraseFile_Arg0 = {"filename",iocshArgString};
+STATIC const iocshArg * const eraseFile_Args[1] = {&eraseFile_Arg0};
+STATIC const iocshFuncDef eraseFile_FuncDef = {"eraseFile",1,eraseFile_Args};
+STATIC void eraseFile_CallFunc(const iocshArgBuf *args)
+{
+    eraseFile(args[0].sval);
+}
+
+/* int appendToFile(char *filename, char *line) */
+STATIC const iocshArg appendToFile_Arg0 = {"filename",iocshArgString};
+STATIC const iocshArg appendToFile_Arg1 = {"line",iocshArgString};
+STATIC const iocshArg * const appendToFile_Args[2] = {&appendToFile_Arg0, &appendToFile_Arg1};
+STATIC const iocshFuncDef appendToFile_FuncDef = {"appendToFile",2,appendToFile_Args};
+STATIC void appendToFile_CallFunc(const iocshArgBuf *args)
+{
+    appendToFile(args[0].sval, args[1].sval);
+}
+
+/* int autosaveBuild(char *filename, char *reqFileSuffix, int on) */
+STATIC const iocshArg autosaveBuild_Arg0 = {"filename",iocshArgString};
+STATIC const iocshArg autosaveBuild_Arg1 = {"reqFileSuffix",iocshArgString};
+STATIC const iocshArg autosaveBuild_Arg2 = {"on",iocshArgInt};
+STATIC const iocshArg * const autosaveBuild_Args[3] = {&autosaveBuild_Arg0, &autosaveBuild_Arg1, &autosaveBuild_Arg2};
+STATIC const iocshFuncDef autosaveBuild_FuncDef = {"autosaveBuild",3,autosaveBuild_Args};
+STATIC void autosaveBuild_CallFunc(const iocshArgBuf *args)
+{
+    autosaveBuild(args[0].sval, args[1].sval, args[2].ival);
+}
+
+
 void dbrestoreRegister(void)
 {
     iocshRegister(&set_pass0_FuncDef, set_pass0_CallFunc);
@@ -1419,6 +1797,9 @@ void dbrestoreRegister(void)
 	iocshRegister(&dbrestoreShow_FuncDef, dbrestoreShow_CallFunc);
 	iocshRegister(&makeAutosaveFileFromDbInfo_FuncDef, makeAutosaveFileFromDbInfo_CallFunc);
 	iocshRegister(&makeAutosaveFiles_FuncDef, makeAutosaveFiles_CallFunc);
+	iocshRegister(&eraseFile_FuncDef, eraseFile_CallFunc);
+	iocshRegister(&appendToFile_FuncDef, appendToFile_CallFunc);
+	iocshRegister(&autosaveBuild_FuncDef, autosaveBuild_CallFunc);
 }
 
 epicsExportRegistrar(dbrestoreRegister);
