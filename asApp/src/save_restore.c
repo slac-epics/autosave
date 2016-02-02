@@ -1568,6 +1568,18 @@ STATIC int get_channel_values(struct chlist *plist)
 #define BS_OK		2	/* File is good */
 #define BS_NEW		3	/* Just wrote the file */
 
+const char * CheckFileStateToStr( int bs )
+{
+	switch( bs )
+	{
+	default:		return "Invalid Backup State Value";
+	case BS_NONE:	return "Can't open file";
+	case BS_BAD:	return "Corrupted file";
+	case BS_OK:		return "File OK";
+	case BS_NEW:	return "New File";
+	}
+}
+
 #ifdef _WIN32
   #define BS_SEEK_DISTANCE -7
 #else
@@ -1787,9 +1799,19 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	stat(filename, &fileStat);
     file_check = check_file(filename);
     delta_time = difftime(time(NULL), fileStat.st_mtime);
-	if ((file_check != BS_OK) || (fileStat.st_size <= 0) ||  (delta_time > 10.0)) {
-		errlogPrintf("save_restore:write_it: file written checking failure [%s], check_file=%d, size=%lld, delta_time=%f\n",
-            datetime, file_check, (long long)fileStat.st_size, delta_time);
+	if ( file_check != BS_OK ) {
+		errlogPrintf(	"save_restore:write_it: file check failure [%s], %s, filename=%s\n",
+						datetime, CheckFileStateToStr( file_check ), filename );
+		return(ERROR);
+	}
+	if ( fileStat.st_size <= 0 ) {
+		errlogPrintf(	"save_restore:write_it: file check failure [%s], size=%lld, filename=%s\n",
+            			datetime, (long long)fileStat.st_size, filename );
+		return(ERROR);
+	}
+	if ( delta_time > 10.0 ) {
+		errlogPrintf(	"save_restore:write_it: file check failure [%s], old timestamp, delta_time=%.1f sec, filename=%s\n",
+            			datetime, delta_time, filename );
 		return(ERROR);
 	}
 
