@@ -194,6 +194,10 @@ mode_t file_permissions = (S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH);
 #define TIMEFMT "%a %b %d %H:%M:%S %Y\n"	/* e.g. 'Fri Sep 13 00:00:00 1986\n'	*/
 #define TIMEFMT_noY "%a %b %d %H:%M:%S"		/* e.g. 'Fri Sep 13 00:00:00'			*/
 
+/* Make sure to leave room for trailing null */
+char SR_STATUS_STR[5][10] =
+	{"No Status", " Failure ", " Warning ", " Warning ", "    Ok   "};
+
 struct chlist {								/* save set list element */
 	struct chlist	*pnext;					/* next list */
 	struct channel	*pchan_list;			/* channel list head */
@@ -345,6 +349,7 @@ STATIC chid	SR_rebootTime_chid;
 volatile int	save_restoreNumSeqFiles = 3;			/* number of sequence files to maintain */
 volatile int	save_restoreSeqPeriodInSeconds = 60;	/* period between sequence-file writes */
 volatile int	save_restoreIncompleteSetsOk = 1;		/* will save/restore incomplete sets? */
+volatile int	save_restoreLogMissingRecords = 1;		/* Log errors on missing records during restore */
 volatile int	save_restoreDatedBackupFiles = 1;		/* save backups as <filename>.bu or <filename>_YYMMDD-HHMMSS */
 volatile int	save_restoreRetrySeconds = 60;			/* Time before retrying write after a failure. */
 volatile int	save_restoreUseStatusPVs = 1;			/* use PVs for status etc. */
@@ -355,6 +360,7 @@ volatile int	save_restoreCallbackTimeout = 600;  /* qiao: if the call back does 
 epicsExportAddress(int, save_restoreNumSeqFiles);
 epicsExportAddress(int, save_restoreSeqPeriodInSeconds);
 epicsExportAddress(int, save_restoreIncompleteSetsOk);
+epicsExportAddress(int, save_restoreLogMissingRecords);
 epicsExportAddress(int, save_restoreDatedBackupFiles);
 epicsExportAddress(int, save_restoreUseStatusPVs);
 epicsExportAddress(int, save_restoreCAReconnect);        /* qiao: export the new variables */
@@ -430,6 +436,7 @@ void save_restoreSet_Debug(int level) {save_restoreDebug = level;}
 void save_restoreSet_NumSeqFiles(int numSeqFiles) {save_restoreNumSeqFiles = numSeqFiles;}
 void save_restoreSet_SeqPeriodInSeconds(int period) {save_restoreSeqPeriodInSeconds = MAX(10, period);}
 void save_restoreSet_IncompleteSetsOk(int ok) {save_restoreIncompleteSetsOk = ok;}
+void save_restoreSet_LogMissingRecords(int ok) {save_restoreLogMissingRecords = ok;}
 void save_restoreSet_DatedBackupFiles(int ok) {save_restoreDatedBackupFiles = ok;}
 void save_restoreSet_status_prefix(char *prefix) {strncpy(status_prefix, prefix, 29);}
 #if SET_FILE_PERMISSIONS
@@ -656,7 +663,7 @@ int manual_save(char *request_file, char *save_file, callbackFunc callbackFuncti
 	op_msg msg;
 
 	if (save_restoreDebug) printf("manual_save: request_file='%s', save_file='%s', callbackFunction=%p, puserPvt=%p\n",
-		request_file, save_file, callbackFunction, puserPvt);
+		request_file, save_file?save_file:"NONE", callbackFunction, puserPvt);
 
 	msg.operation = op_SaveFile;
 	strncpy(msg.requestfilename, request_file, OP_MSG_FILENAME_SIZE);
@@ -670,6 +677,12 @@ int manual_save(char *request_file, char *save_file, callbackFunc callbackFuncti
 	msg.callbackFunction = callbackFunction;
 	epicsMessageQueueSend(opMsgQueue, (void *)&msg, OP_MSG_SIZE);
 	return(0);
+}
+
+/* Allow IOC app to request a manual save */
+int request_manual_save( char *request_file, char *save_file )
+{
+	return manual_save( request_file, save_file, NULL, NULL );
 }
 
 
@@ -1541,7 +1554,7 @@ STATIC int get_channel_values(struct chlist *plist)
 		}
 	}
 	if (ca_pend_io(MIN(10.0, .1*num_channels)) != ECA_NORMAL) {
-		errlogPrintf("save_restore:get_channel_values: not all gets completed");
+		errlogPrintf("save_restore:get_channel_values: not all gets completed\n");
 		not_connected++;
 	}
 
@@ -1570,6 +1583,18 @@ STATIC int get_channel_values(struct chlist *plist)
 #define BS_BAD		1	/* File exists but looks corrupted */
 #define BS_OK		2	/* File is good */
 #define BS_NEW		3	/* Just wrote the file */
+
+const char * CheckFileStateToStr( int bs )
+{
+	switch( bs )
+	{
+	default:		return "Invalid Backup State Value";
+	case BS_NONE:	return "Can't open file";
+	case BS_BAD:	return "Corrupted file";
+	case BS_OK:		return "File OK";
+	case BS_NEW:	return "New File";
+	}
+}
 
 #ifdef _WIN32
   #define BS_SEEK_DISTANCE -7
@@ -1654,6 +1679,10 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	}
 #endif
 
+	if ( out_fd != NULL && save_restoreDebug > 1)
+	{
+		printf("save_restore:write_it - opened file '%s' [%s]\n", filename, datetime);
+	}
 
 	/* write header info */
 	errno = 0;
@@ -1785,9 +1814,19 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	stat(filename, &fileStat);
     file_check = check_file(filename);
     delta_time = difftime(time(NULL), fileStat.st_mtime);
-	if ((file_check != BS_OK) || (fileStat.st_size <= 0) ||  (delta_time > 10.0)) {
-		errlogPrintf("save_restore:write_it: file written checking failure [%s], check_file=%d, size=%lld, delta_time=%f\n",
-            datetime, file_check, (long long)fileStat.st_size, delta_time);
+	if ( file_check != BS_OK ) {
+		errlogPrintf(	"save_restore:write_it: file check failure [%s], %s, filename=%s\n",
+						datetime, CheckFileStateToStr( file_check ), filename );
+		return(ERROR);
+	}
+	if ( fileStat.st_size <= 0 ) {
+		errlogPrintf(	"save_restore:write_it: file check failure [%s], size=%lld, filename=%s\n",
+            			datetime, (long long)fileStat.st_size, filename );
+		return(ERROR);
+	}
+	if ( delta_time > 10.0 ) {
+		errlogPrintf(	"save_restore:write_it: file check failure [%s], old timestamp, delta_time=%.1f sec, filename=%s\n",
+            			datetime, delta_time, filename );
 		return(ERROR);
 	}
 
@@ -2122,14 +2161,14 @@ STATIC int create_data_set(
 	/* initialize save_restore routines */
 	if (!save_restore_init) {
 		if ((sr_mutex = epicsMutexCreate()) == 0) {
-			errlogPrintf("save_restore:create_data_set: could not create list header mutex");
+			errlogPrintf("save_restore:create_data_set: could not create list header mutex\n");
 			return(ERROR);
 		}
 		taskID = epicsThreadCreate("save_restore", taskPriority,
 			epicsThreadGetStackSize(epicsThreadStackBig),
 			(EPICSTHREADFUNC)save_restore, 0);
 		if (taskID == NULL) {
-			errlogPrintf("save_restore:create_data_set: could not create save_restore task");
+			errlogPrintf("save_restore:create_data_set: could not create save_restore task\n");
 			return(ERROR);
 		}
 		save_restore_init = 1;
@@ -2153,7 +2192,7 @@ STATIC int create_data_set(
 	while (plist != 0) {
 		if (!strcmp(plist->reqFile,filename)) {
 			if (plist->save_method & save_method) {
-				errlogPrintf("save_restore:create_data_set: '%s' already in %x mode",filename,save_method);
+				errlogPrintf("save_restore:create_data_set: '%s' already in %x mode\n",filename,save_method);
 				unlockList();
 				return(ERROR);
 			} else {
@@ -2162,7 +2201,7 @@ STATIC int create_data_set(
 					if (trigger_channel) {
 						strncpy(plist->trigger_channel,trigger_channel, PV_NAME_LEN-1);
 					} else {
-						errlogPrintf("save_restore:create_data_set: no trigger channel");
+						errlogPrintf("save_restore:create_data_set: no trigger channel\n");
 						unlockList();
 						return(ERROR);
 					}
@@ -2189,7 +2228,7 @@ STATIC int create_data_set(
 
 	/* create a new channel list */
 	if ((plist = (struct chlist *)calloc(1,sizeof (struct chlist))) == (struct chlist *)0) {
-		errlogPrintf("save_restore:create_data_set: channel list calloc failed");
+		errlogPrintf("save_restore:create_data_set: channel list calloc failed\n");
 		return(ERROR);
 	}
 	if (macrostring && (strlen(macrostring)>0)) {
@@ -2614,7 +2653,8 @@ int fdbrestoreX(char *filename, char *macrostring, callbackFunc callbackFunction
 	return(request_manual_restore(filename, FROM_ASCII_FILE, macrostring, callbackFunction, puserPvt));
 }
 
-STATIC void defaultCallback(int status, void *puserPvt) {
+STATIC void defaultCallback(int status, void *puserPvt)
+{
 	printf("save_restore:defaultCallback:status=%d\n", status);
 }
 
@@ -3119,7 +3159,7 @@ STATIC int do_manual_restore(char *filename, int file_type, char *macrostring)
 		inp_fd = fopen(restoreFile, "r");
 	}
 	if (inp_fd == NULL) {
-		errlogPrintf("save_restore:do_manual_restore: Can't open save file.");
+		errlogPrintf("save_restore:do_manual_restore: Can't open save file.\n");
 		strncpy(SR_recentlyStr, "Manual restore failed",(STRING_LEN-1));
 		return(ERROR);
 	}
@@ -3443,7 +3483,7 @@ STATIC int readReqFile(const char *reqFile, struct chlist *plist, char *macrostr
 				plist->status = SR_STATUS_WARN;
 				strncpy(plist->statusStr, "Can't alloc channel memory", EBUF_SIZE-1);
 				TRY_TO_PUT_AND_FLUSH(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
-				errlogPrintf("save_restore:readReqFile: channel calloc failed");
+				errlogPrintf("save_restore:readReqFile: channel calloc failed\n");
 			} else {
 				/* add new element to the list */
 #if BACKWARDS_LIST

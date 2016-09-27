@@ -1,17 +1,16 @@
 TOP=../..
 
 include $(TOP)/configure/CONFIG
-#----------------------------------------
+#============================================
 #  ADD MACRO DEFINITIONS AFTER THIS LINE
-#=============================
+#============================================
 
 PROD_HOST += asVerify
 asVerify_SRCS	+= asVerify.c verify.c
 asVerify_LIBS	+= ca
 asVerify_LIBS	+= Com
 
-
-#=============================
+#==================================================
 # xxxRecord.h will be created from xxxRecord.dbd
 
 #DBDINC += xxxRecord
@@ -20,13 +19,16 @@ asVerify_LIBS	+= Com
 #USR_CFLAGS += -DDBLOADRECORDSHOOKREGISTER
 
 # <name>.dbd will be created from <name>Include.dbd
-DBD += as.dbd
-DBD += asSupport.dbd
+DBD += autosave.dbd
+DBD += autosaveSupport.dbd
 
 #include files
 INC += osdNfs.h
+INC	+= save_restore.h
 
-#=============================
+#===================================================
+# create library for linking will install in <lib>
+#===================================================
 
 LIBRARY_IOC += autosave
 
@@ -40,22 +42,25 @@ autosave_SRCS += osdNfs.c
 
 autosave_LIBS += $(EPICS_BASE_IOC_LIBS)
 
-#=============================
-# build an ioc application for testing
+#=================================================================
+# create munch file for dynamic loading will install in <bin>
+#=================================================================
+PROD_IOC = autosaveLib
 
-PROD_IOC = asApp
-
+# The PROD_IOC is built from the same srcs and must include
+# the registry routines.
 # <name>_registerRecordDeviceDriver.cpp will be created from <name>.dbd
-asApp_SRCS_DEFAULT += as_registerRecordDeviceDriver.cpp
-asApp_SRCS_DEFAULT += asMain.cpp
-asApp_SRCS_vxWorks += -nil-
+#autosaveLib_SRCS += $(autosave_SRCS)
+autosaveLib_SRCS_DEFAULT += autosave_registerRecordDeviceDriver.cpp
+autosaveLib_SRCS_DEFAULT += autosaveMain.cpp
+autosaveLib_SRCS_vxWorks += -nil-
 #The following adds support from base/src/vxWorks
-asApp_OBJS_vxWorks += $(EPICS_BASE_BIN)/vxComLibrary
+autosaveLib_OBJS_vxWorks += $(EPICS_BASE_BIN)/vxComLibrary
 
-asApp_LIBS += autosave
-asApp_LIBS += $(EPICS_BASE_IOC_LIBS)
+autosaveLib_LIBS += autosave
+autosaveLib_LIBS += $(EPICS_BASE_IOC_LIBS)
 
-#===========================
+#====================================================================
 
 include $(TOP)/configure/RULES
 #----------------------------------------
