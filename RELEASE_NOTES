@@ -1,3 +1,133 @@
-# RELEASE_NOTES
+#==============================================================
 #
+#  Name: RELEASE_NOTES
+#
+#  Rem: This files describes release notes for
+#       the autosave support.
+#
+#  Auth: dd-mmm-yyyy, Tim Moony          (mooney@aps.anl.gov)
+#  Rev:  dd-mmm-yyyy, Reviewer's Name    (USERNAME)
+#------------------------------------------------------------
+#  Mod:
+#        06-Aug-2011, Z.Geng             (GENG):
+#           release autosave-R4-7-lcls5
+#        08-Dec-2010, Z.Geng             (GENG):
+#           release autosave-R4-7-lcls2
+#        22-Nov-2010, Z.Geng             (GENG):
+#           release autosave-R4-7-lcls1
+#        20-Mar-2010, S. Hoobler         (SONYA):
+#           release autosave-R4-5-lcls2
+#        29-Apr-2009, K. Luchini         (LUCHINI):
+#           release autosave-R4-4-lcls2
+#
+#==============================================================
+#
+
+R5.6.2-1.1.0:	Preserves local changes from lcls-trunk.
+				Primarily keeping name autosaveInclude.dbd instead of asInclude.dbd
+				Also preserves edl files from lcls-trunk along w/ misc configure files.
+				bhill (9/26/2016)
+
 R5.6.2-0.1.0:	Minimal changes to build locally.  bhill (9/26/2016)
+
+autosave-R5-5_0-0:     New merge of autosave-5-5 release from Argonne.
+                       Check documentation directory for details.
+
+autosave-R5-0_1-0:     New merge of autosave-5-0 release from Argonne.
+
+autosave-R4-8_4-1:     Fix restore of unsigned long waveforms in dbrestore.c. (09/19/2012)
+
+autosave-R4-8_4-0:     Retag. No changes. (04/30/2012)
+
+autosave-R4-8-lcls4:   Remove delta_time (10 sec) check in write_it() when verifying if file saved. (04/30/2012)
+
+autosave-R4-8-lcls3:   Had to change comments from // to /* style to compile in R3-14-8-2
+
+autosave-R4-8-lcls2:   Fixed bug where empty wavelengths were saved as scalars 
+                       and restored with incorrect values
+
+autosave-R4-8-lcls1:   Updates from APS to bring SLAC up to version
+                       R4-8
+                       READ APS Release Notes:
+                       http://www.aps.anl.gov/bcda/synApps/autosave/autosaveReleaseNotes.html
+
+autosave-R4-7-lcls5:   * Bug fixing for compiling for vxWorks
+
+autosave-R4-7-lcls4:   * Modify RELEASE_SITE to use EPICS R3-14-8-2-lcls6_p1
+
+autosave-R4-7-lcls3:   * Modifications to build against both EPICS BASE
+                         R3-14-12 and EPICS R3-14-8-2
+
+autosave-R4-7-lcls2:   * Fixed the bug of NFS mounting for RTEMS in the last release 
+
+autosave-R4-7-lcls1:   * Formal version of autosave-beta3, with the modification of
+                         - back compatible interfaces for NFS mounting with autosave R4-7
+
+autosave-beta3:        * Fix the bug of waveform restore when the array end mark of "}" is exactly
+                         the 120th character of the string in the .sav file
+
+autosave-beta2:        * Added the exception handling for empty NFS host settings
+                         - if the user did not set the NFS host name and mounting point,
+                           disable the NFS remounting functionality
+                         - if the NFS access automatically recovered, stop trying to remount NFS
+                       * Fixed the bug of wrongly displayed message of "Call back time out"
+
+autosave-beta1:        * Synch with autosave R4-7
+                       * Introduced NFS remount function for RTEMS in case of too many
+                         file written failures
+                       * Seperated the NFS mounting code to src/os folder for vxWorks, RTEMS
+                         and Linux
+                       * Added timeout checking for PERIODIC or MONITORED callback functions
+                       * Enabled to reconnect the unconnected CA channels
+                       * Used ca_create_channel + callback instead of ca_search
+                       * Added illegal pointer checking at callback functions
+                       * Added file checking after writting to the disk
+                       * Disconnected all CA channels before existing the program
+                       * Increased the size of info buffer for save list auto generation from
+                         database
+
+autosave-R4-5-lcls2:   Built against rtems 4.9.4 and 
+                       EPICS BASE: base-R3-14-8-2-lcls6
+
+autosave-R4-5-lcls1:   Built against rtems 4.9.3 and 
+                       EPICS BASE: base-R3-14-8-2-lcls5
+                       New version of autosave from APS as well:
+                       http://www.aps.anl.gov/bcda/synApps/autosave/autosave.html                   
+
+autosave-R4-4-lcls2:
+Built against EPICS R3.14.8.2 and RTEMS 4.9.1 as well
+
+autosave-R4-4-lcls1:
+Synch with APS autosave version 4-4 package
+Built against EPICS R3.14.10 and RTEMS 4.9
+Built against EPICS R3.14.8.2 and RTEMS 4.7.1 as well
+
+autosave-R4-2-1-lcls2:
+More cosmetic changes for R3.14.9
+
+
+autosave-R4-2-1-lcls1:
+
+Steve fixed up EDM screens
+More cleanup to morph into lcls style template.
+Built against EPICS R3.14.9 and RTEMS 4.7.1
+
+
+autosave-R1-0-2:
+No functional change:
+Built against EPICS R3.14.9 and RTEMS 4.7.1
+
+
+autosave-R1-0-1:
+No functional change:
+Built against EPICS R3.14.8.2 and RTEMS 4.7.1
+
+
+R1-0-0: Initial Release obtained from APS.
+
+autosave-R1-0-0:
+No changes except to beautify the configure/RELEASE file
+Also follow the tag naming convention.
+
+
+
