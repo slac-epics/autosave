@@ -1,0 +1,6 @@
+# Pull in definitions for EPICS_BASE and EPICS_MODULES
+-include $(TOP)/RELEASE.local
+-include $(TOP)/../../RELEASE.local
+
+# Module dependencies
+
