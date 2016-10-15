@@ -1,5 +1,7 @@
 # RELEASE_NOTES
 #
+R5.6.2-2.2.0:   Tweaked build to set EPICS_BASE last.  bhill (9/26/2016)
+
 R5.6.2-2.1.0:   Merged in pcds-trunk.  bhill (9/26/2016)
     Added autosaveScreens directory w/ PCDS autosave screens
     Added translation from status error codes to strings in diagnostic messages.
