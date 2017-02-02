@@ -5,3 +5,6 @@ include
 lib
 O.*
 *.log
+tags
+RELEASE_SITE
+configure/RELEASE.local
