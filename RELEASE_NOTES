@@ -1,0 +1,15 @@
+# RELEASE_NOTES
+#
+R5.7.1-0.1.0:   Bringing in new version from the collaboration. slepicka (2/6/2017)
+    Added just the minimum changes to compile at the SLAC environment.
+
+R5.6.2-2.2.0:   Tweaked build to set EPICS_BASE last.  bhill (9/26/2016)
+
+R5.6.2-2.1.0:   Merged in pcds-trunk.  bhill (9/26/2016)
+    Added autosaveScreens directory w/ PCDS autosave screens
+    Added translation from status error codes to strings in diagnostic messages.
+    Added configurable save_restoreLogMissingRecords flag.
+    Added ioc callable function: request_manual_save( char *request_file, char *save_file )
+    Added \n to all error msgs that didn't have one.
+    Added additional diagnostic error msgs for various file I/O problems.
+    Added extern "C" __cplusplus wrapper to save_restore.h
