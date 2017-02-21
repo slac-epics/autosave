@@ -11,6 +11,9 @@ include $(TOP)/configure/CONFIG
 # Create and install (or just install) into <top>/db
 # databases, templates, substitutions like this
 #DB += xxx.db
+DB += SR_test.db
+DB += configMenu.db
+DB += save_restoreStatus.db
 
 #----------------------------------------------------
 # If <anyname>.db template is not named <anyname>*.template add

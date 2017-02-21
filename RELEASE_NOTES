@@ -2,6 +2,7 @@
 #
 R5.7.1-0.1.0:   Bringing in new version from the collaboration. slepicka (2/6/2017)
     Added just the minimum changes to compile at the SLAC environment.
+    Added files to compose db folder.
 
 R5.6.2-2.2.0:   Tweaked build to set EPICS_BASE last.  bhill (9/26/2016)
 
