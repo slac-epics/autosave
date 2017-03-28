@@ -1,5 +1,11 @@
 # RELEASE_NOTES
 #
+R5.7.1-1.0.0:   Marcio Donadio (3/28/2017)
+                - Now autosave changes .sav file permission if and only if 
+                  save_restoreSet_FilePermissions is used.
+                - Created function to print a human readable error message case
+                  autosave fails to change .sav file permissions.
+
 R5.7.1-0.1.0:   Bringing in new version from the collaboration. slepicka (2/6/2017)
     Added just the minimum changes to compile at the SLAC environment.
     Added files to compose db folder.
