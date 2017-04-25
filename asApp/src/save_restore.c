@@ -1599,14 +1599,14 @@ STATIC int get_channel_values(struct chlist *plist)
 
 const char * CheckFileStateToStr( int bs )
 {
-	switch( bs )
-	{
-	default:		return "Invalid Backup State Value";
-	case BS_NONE:	return "Can't open file";
-	case BS_BAD:	return "Corrupted file";
-	case BS_OK:		return "File OK";
-	case BS_NEW:	return "New File";
-	}
+    switch( bs )
+    {
+    default:        return "Invalid Backup State Value";
+    case BS_NONE:   return "Can't open file";
+    case BS_BAD:    return "Corrupted file";
+    case BS_OK:     return "File OK";
+    case BS_NEW:    return "New File";
+    }
 }
 
 #ifdef _WIN32

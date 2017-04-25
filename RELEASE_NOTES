@@ -1,6 +1,7 @@
 # RELEASE_NOTES
 #
 R5.7.1-2.0.0	2017-04-25	Bruce Hill
+	Changed autosaveSupport.dbd to asSupport.dbd and other related renaming to match collaboration naming
 	Merged in R5.7.1-0.branch
 
 R5.6.2-2.2.0:   Tweaked build to set EPICS_BASE last.  bhill (9/26/2016)
