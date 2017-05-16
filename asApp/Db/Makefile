@@ -10,10 +10,10 @@ include $(TOP)/configure/CONFIG
 #----------------------------------------------------
 # Create and install (or just install) into <top>/db
 # databases, templates, substitutions like this
-
 DB += save_restoreStatus.db
 DB += SR_array_test.db
 DB += SR_test.db
+DB += configMenu.db
 
 #----------------------------------------------------
 # Create and install (or just install)
@@ -21,7 +21,6 @@ DB += SR_test.db
 # ARCHIVE += <file>.archive
 # ARCHIVE += <file>.substitutions
 # ARCHIVE += <file>.template
-#
 ARCHIVE += archive_SR.sub-arch
 ARCHIVE += archive_SR.tpl-arch
 
