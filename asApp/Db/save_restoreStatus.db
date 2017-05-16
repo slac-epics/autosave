@@ -38,6 +38,9 @@ record(mbbo, "$(IOC):SR_rebootStatus") {
   field(TWST, "Warning")
   field(THST, "Seq Fail")
   field(FRST, "Ok")
+  field(ONSV, "MAJOR")
+  field(TWSV, "MINOR")
+  field(THSV, "MAJOR")
 }
 
 record(mbbo, "$(IOC):SR_status") {
@@ -52,6 +55,9 @@ record(mbbo, "$(IOC):SR_status") {
   field(TWST, "Warning")
   field(THST, "Seq Fail")
   field(FRST, "Ok")
+  field(ONSV, "MAJOR")
+  field(TWSV, "MINOR")
+  field(THSV, "MAJOR")
 }
 
 record(stringout, "$(IOC):SR_recentlyStr") {
@@ -95,6 +101,9 @@ record(mbbo, "$(IOC):SR_0_Status") {
   field(TWST, "Warning")
   field(THST, "Seq Fail")
   field(FRST, "Ok")
+  field(ONSV, "MAJOR")
+  field(TWSV, "MINOR")
+  field(THSV, "MAJOR")
 }
 
 record(stringout, "$(IOC):SR_0_StatusStr") {
@@ -128,6 +137,9 @@ record(mbbo, "$(IOC):SR_1_Status") {
   field(TWST, "Warning")
   field(THST, "Seq Fail")
   field(FRST, "Ok")
+  field(ONSV, "MAJOR")
+  field(TWSV, "MINOR")
+  field(THSV, "MAJOR")
 }
 
 record(stringout, "$(IOC):SR_1_StatusStr") {
@@ -161,6 +173,9 @@ record(mbbo, "$(IOC):SR_2_Status") {
   field(TWST, "Warning")
   field(THST, "Seq Fail")
   field(FRST, "Ok")
+  field(ONSV, "MAJOR")
+  field(TWSV, "MINOR")
+  field(THSV, "MAJOR")
 }
 
 record(stringout, "$(IOC):SR_2_StatusStr") {
@@ -194,6 +209,9 @@ record(mbbo, "$(IOC):SR_3_Status") {
   field(TWST, "Warning")
   field(THST, "Seq Fail")
   field(FRST, "Ok")
+  field(ONSV, "MAJOR")
+  field(TWSV, "MINOR")
+  field(THSV, "MAJOR")
 }
 
 record(stringout, "$(IOC):SR_3_StatusStr") {
@@ -227,6 +245,9 @@ record(mbbo, "$(IOC):SR_4_Status") {
   field(TWST, "Warning")
   field(THST, "Seq Fail")
   field(FRST, "Ok")
+  field(ONSV, "MAJOR")
+  field(TWSV, "MINOR")
+  field(THSV, "MAJOR")
 }
 
 record(stringout, "$(IOC):SR_4_StatusStr") {
@@ -260,7 +281,9 @@ record(mbbo, "$(IOC):SR_5_Status") {
   field(TWST, "Warning")
   field(THST, "Seq Fail")
   field(FRST, "Ok")
-
+  field(ONSV, "MAJOR")
+  field(TWSV, "MINOR")
+  field(THSV, "MAJOR")
 }
 
 record(stringout, "$(IOC):SR_5_StatusStr") {
@@ -294,6 +317,9 @@ record(mbbo, "$(IOC):SR_6_Status") {
   field(TWST, "Warning")
   field(THST, "Seq Fail")
   field(FRST, "Ok")
+  field(ONSV, "MAJOR")
+  field(TWSV, "MINOR")
+  field(THSV, "MAJOR")
 }
 
 record(stringout, "$(IOC):SR_6_StatusStr") {
@@ -322,12 +348,14 @@ record(mbbo, "$(IOC):SR_7_Status") {
   field(TWVL, "2")
   field(THVL, "3")
   field(FRVL, "4")
-
   field(ZRST, "No Status")
   field(ONST, "Failure")
   field(TWST, "Warning")
   field(THST, "Seq Fail")
   field(FRST, "Ok")
+  field(ONSV, "MAJOR")
+  field(TWSV, "MINOR")
+  field(THSV, "MAJOR")
 }
 
 record(stringout, "$(IOC):SR_7_StatusStr") {
