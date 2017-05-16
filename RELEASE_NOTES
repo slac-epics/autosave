@@ -1,5 +1,7 @@
 # RELEASE_NOTES
-#
+R5.7.1-3.0.0    2017-05-16      Marcio Donadio
+        Branch R5.7.1-3.branch created from the merge of R5.7.1-2.branch with R5.7.1-1.branch
+
 R5.7.1-2.0.0	2017-04-25	Bruce Hill
 	Changed autosaveSupport.dbd to asSupport.dbd and other related renaming to match collaboration naming
 	Merged in R5.7.1-0.branch
