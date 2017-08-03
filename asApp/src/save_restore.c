@@ -713,7 +713,7 @@ int manual_save(char *request_file, char *save_file, callbackFunc callbackFuncti
 	op_msg msg;
 
 	if (save_restoreDebug) printf("manual_save: request_file='%s', save_file='%s', callbackFunction=%p, puserPvt=%p\n",
-		request_file, save_file, callbackFunction, puserPvt);
+		request_file, save_file?save_file:"NONE", callbackFunction, puserPvt);
 
 	msg.operation = op_SaveFile;
 	strNcpy(msg.requestfilename, request_file, OP_MSG_FILENAME_SIZE);
@@ -1933,22 +1933,22 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	/* qiao: check the file state: the file contents, file size and the save time of the file */
     file_check = check_file(filename);
 	if (file_check != BS_OK) {
-		printf("save_restore:write_it: file-check failure [%s], check_file=%d\n",
-            datetime, file_check);
+		errlogPrintf(	"save_restore:write_it: file check failure [%s], %s, filename=%s\n",
+						datetime, CheckFileStateToStr( file_check ), filename );
 		return(ERROR);
 	}
 
 	stat(filename, &fileStat);
 	if (fileStat.st_size <= 0) {
-		printf("save_restore:write_it: unphysical file size [%s], size=%lld\n",
-            datetime, (long long)fileStat.st_size);
+		errlogPrintf(	"save_restore:write_it: unphysical file size [%s], size=%lld, filename=%s\n",
+            			datetime, (long long)fileStat.st_size, filename );
 		return(ERROR);
 	}
 
     delta_time = difftime(time(NULL), fileStat.st_mtime);
 	if (delta_time > 10.0) {
-		printf("save_restore:write_it: file time is different from IOC time [%s], difference=%fs\n",
-            datetime, delta_time);
+		errlogPrintf(	"save_restore:write_it: file time is older than IOC time [%s], difference=%.1f sec, filename=%s\n",
+            			datetime, delta_time, filename );
 		return(ERROR);
 	}
 
@@ -2374,9 +2374,9 @@ STATIC int create_data_set(
 				/* Add a new method to an existing list */
 				if (save_method == TRIGGERED) {
 					if (trigger_channel) {
-						strNcpy(plist->trigger_channel,trigger_channel, PV_NAME_LEN);
+						strNcpy(plist->trigger_channel,trigger_channel, PV_NAME_LEN-1);
 					} else {
-						printf("save_restore:create_data_set: no trigger channel");
+						errlogPrintf("save_restore:create_data_set: no trigger channel\n");
 						unlockList();
 						return(ERROR);
 					}
@@ -3343,7 +3343,7 @@ STATIC int do_manual_restore(char *filename, int file_type, char *macrostring)
 		inp_fd = fopen(restoreFile, "r");
 	}
 	if (inp_fd == NULL) {
-		printf("save_restore:do_manual_restore: Can't open save file.");
+		errlogPrintf("save_restore:do_manual_restore: Can't open save file.\n");
 		strNcpy(SR_recentlyStr, "Manual restore failed",STATUS_STR_LEN);
 		return(ERROR);
 	}
@@ -3699,9 +3699,9 @@ STATIC int readReqFile(const char *reqFile, struct chlist *plist, char *macrostr
 			pchannel = (struct channel *)calloc(1,sizeof (struct channel));
 			if (pchannel == (struct channel *)0) {
 				plist->status = SR_STATUS_WARN;
-				strNcpy(plist->statusStr, "Can't alloc channel memory", EBUF_SIZE);
+				strNcpy(plist->statusStr, "Can't alloc channel memory", EBUF_SIZE-1);
 				TRY_TO_PUT_AND_FLUSH(DBR_STRING, plist->statusStr_chid, &plist->statusStr);
-				printf("save_restore:readReqFile: channel calloc failed");
+				errlogPrintf("save_restore:readReqFile: channel calloc failed\n");
 			} else {
 				/* add new element to the list */
 #if BACKWARDS_LIST
