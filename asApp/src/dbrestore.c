@@ -840,7 +840,7 @@ int reboot_restore(char *filename, initHookState init_state)
 	errlogPrintf("*** restoring from '%s' at initHookState %d (%s record/device init) ***\n",
 		fname, (int)init_state, pass ? "after" : "before");
 	if ((inp_fd = fopen_and_check(fname, &status)) == NULL) {
-		errlogPrintf("save_restore: Can't open save file.");
+		errlogPrintf("save_restore: Can't open save file.\n");
 		if (pStatusVal) *pStatusVal = SR_STATUS_FAIL;
 		if (statusStr) strNcpy(statusStr, "Can't open save file.", STATUS_STR_LEN-1);
 		dbFinishEntry(pdbentry);
