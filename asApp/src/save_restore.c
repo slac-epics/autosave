@@ -1933,8 +1933,8 @@ STATIC int write_it(char *filename, struct chlist *plist)
 	/* qiao: check the file state: the file contents, file size and the save time of the file */
     file_check = check_file(filename);
 	if (file_check != BS_OK) {
-		errlogPrintf(	"save_restore:write_it: file check failure [%s], %s, filename=%s\n",
-						datetime, CheckFileStateToStr( file_check ), filename );
+		errlogPrintf(	"save_restore:write_it: file check failure [%s], %d, filename=%s\n",
+						datetime, file_check, filename );
 		return(ERROR);
 	}
 
