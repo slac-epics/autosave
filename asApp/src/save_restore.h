@@ -1,7 +1,14 @@
+#ifndef	AUTOSAVE_SAVE_RESTORE_H
+#define	AUTOSAVE_SAVE_RESTORE_H
+
 /* save_restore.h */
 
 #include <ellLib.h> /* pass0List, pass1List */
 #include <initHooks.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif	/* __cplusplus */
 
 #define STATIC_VARS 0
 #define DEBUG 1
@@ -38,9 +45,8 @@
 #define SR_STATUS_FAIL		1
 #define SR_STATUS_INIT		0
 
-/* Make sure to leave room for trailing null */
-static char SR_STATUS_STR[5][10] =
-	{"No Status", " Failure ", " Warning ", " Warning ", "    Ok   "};
+/* Status strings */
+extern char SR_STATUS_STR[5][10];
 
 #define FLOAT_FMT "%.7g"
 #define DOUBLE_FMT "%.14g"
@@ -55,7 +61,7 @@ static char SR_STATUS_STR[5][10] =
 #define ARRAY_MARKER "@array@"
 #define ARRAY_MARKER_LEN 7
 
-#define FN_LEN 255 /* filename length */
+#define FN_LEN		255 /* filename length */
 #define STRING_LEN MAX_STRING_SIZE	/* EPICS max length for string PV */
 #define STATUS_STR_LEN 300
 #define PV_NAME_LEN 80 /* string containing a PV name */
@@ -86,6 +92,7 @@ extern long SR_put_array_values(char *PVname, void *p_data, long num_values);
 #define PATH_SIZE 255		/* max size of the complete path to one file */
 
 extern volatile int save_restoreIncompleteSetsOk;
+extern volatile int save_restoreLogMissingRecords;
 extern char saveRestoreFilePath[];              /* path to save files */
 extern volatile int save_restoreNumSeqFiles;
 extern volatile int save_restoreDebug;
@@ -93,6 +100,11 @@ extern volatile int save_restoreDatedBackupFiles;
 extern struct restoreList restoreFileList;
 extern int myFileCopy(const char *source, const char *dest);
 extern void dbrestoreShow(void);
+extern int create_manual_set(char *filename, char *macrostring);
+extern int reload_manual_set(char * filename, char *macrostring);
+extern int fdbrestore(char *filename);
+extern int request_manual_save( char *request_file, char *save_file );
+extern int set_savefile_name(char *filename, char *save_filename);
 extern void makeNfsPath(char *dest, const char *s1, const char *s2);
 extern int do_asVerify(char *fileName, int verbose, int debug, int write_restore_file, char *restoreFileName);
 
@@ -121,3 +133,8 @@ extern float mySafeDoubleToFloat(double d);
 	*dd = '\0';							\
 }
 
+#ifdef __cplusplus
+}
+#endif	/* __cplusplus */
+
+#endif	/* AUTOSAVE_SAVE_RESTORE_H */

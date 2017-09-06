@@ -239,8 +239,8 @@ STATIC long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *valu
 
 		status = dbPutString(pdbentry, value_string);
 		if (save_restoreDebug >= 15) {
-			errlogPrintf("dbrestore:scalar_restore: dbPutString() returns %ld:", status);
-			errMessage(status, " ");
+			errlogPrintf("dbrestore:scalar_restore: dbPutString() returns %ld:\n", status);
+			errPrintf(status, __FILE__, __LINE__, " ");
 		}
 		
 		break;
@@ -250,8 +250,8 @@ STATIC long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *valu
 		if (pass == 0) {
 			status = dbPutString(pdbentry, value_string);
 			if (save_restoreDebug >= 15) {
-				errlogPrintf("dbrestore:scalar_restore: dbPutString() returns %ld:", status);
-				errMessage(status, " ");
+				errlogPrintf("dbrestore:scalar_restore: dbPutString() returns %ld:\n", status);
+				errPrintf(status, __FILE__, __LINE__, " ");
 			}
 		} else if (save_restoreDebug > 1) {
 				errlogPrintf("dbrestore:scalar_restore: Can't restore link field (%s) in pass 1.\n", PVname);
@@ -262,8 +262,8 @@ STATIC long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *valu
 		n = (int)atol(value_string);
 		status = dbPutMenuIndex(pdbentry, n);
 		if (save_restoreDebug >= 15) {
-			errlogPrintf("dbrestore:scalar_restore: dbPutMenuIndex() returns %ld:", status);
-			errMessage(status, " ");
+			errlogPrintf("dbrestore:scalar_restore: dbPutMenuIndex() returns %ld:\n", status);
+			errPrintf(status, __FILE__, __LINE__, " ");
 		}
 		break;
 
@@ -288,7 +288,7 @@ STATIC long scalar_restore(int pass, DBENTRY *pdbentry, char *PVname, char *valu
 	if (status) {
 		errlogPrintf("dbrestore:scalar_restore: restore of '%s' for '%s' failed\n",
 			value_string, PVname);
-		errMessage(status," ");
+		errPrintf(status,__FILE__, __LINE__, " ");
 	}
 	if (save_restoreDebug >= 15) {
 		errlogPrintf("dbrestore:scalar_restore: dbGetString() returns '%s'\n",dbGetString(pdbentry));
@@ -973,7 +973,9 @@ int reboot_restore(char *filename, initHookState init_state)
 
 			found_field = 1;
 			if ((status = dbFindRecord(pdbentry, realName)) != 0) {
-				errlogPrintf("dbFindRecord for '%s' failed\n", PVname);
+				if (!save_restoreLogMissingRecords) {
+					errlogPrintf("dbFindRecord for '%s' failed\n", PVname);
+				}
 				num_errors++; found_field = 0;
 			} else if (dbFoundField(pdbentry) == 0) {
 				errlogPrintf("dbrestore:reboot_restore: dbFindRecord did not find field '%s'\n", PVname);
@@ -1292,7 +1294,7 @@ FILE *fopen_and_check(const char *fname, long *status)
 			backup_sequence_num = 0;
 	}
 
-	errlogPrintf("save_restore: Can't find a file to restore from...");
+	errlogPrintf("save_restore: Can't find a file to restore from...\n");
 	errlogPrintf("save_restore: ...last tried '%s'. I give up.\n", file);
 	printf("save_restore: **********************************\n\n");
 	return(0);
