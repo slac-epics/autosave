@@ -999,7 +999,7 @@ int reboot_restore(char *filename, initHookState init_state)
 					 */
 					status = SR_array_restore(pass, inp_fd, PVname, value_string, 1);
 				}
-			} /* if (found_field) {} else {... */
+			} /* if (found_field) {} else {...} */
 		} else if (PVname[0] == '!') {
 			/*
 			* string is an error message -- something like:
