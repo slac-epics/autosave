@@ -1,6 +1,6 @@
 # RELEASE_NOTES
 #
-R5.8.2-0.1.0	2017-09-06	Bruce Hill
+R5.8-2.1.0	2017-09-06	Bruce Hill
 	Started from R5-8 but merged in changes from R5.7.1-2.branch
 		Added autosaveScreens directory w/ PCDS autosave screens
 		Added translation from status error codes to strings in diagnostic messages.
