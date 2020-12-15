@@ -1,4 +1,7 @@
 # RELEASE_NOTES
+R5.10-1.1.0      2020-12-15      Marcio Donadio
+        - Added missing files to create archive directory. 
+
 R5.10-1.0.0      2020-03-31      Marcio Donadio
         - Raised allowed number of characters for filenames.
         - Added a newline to a message print.
