@@ -12,6 +12,7 @@ include/
 lib/
 templates/
 autosave/
+archive/
 cdCommands
 envPaths
 RELEASE_SITE

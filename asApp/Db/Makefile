@@ -14,6 +14,14 @@ include $(TOP)/configure/CONFIG
 DB += save_restoreStatus.db
 DB += configMenu.db
 
+#----------------------------------------------------
+# Create and install (or just install)
+# Archive request files, templates, substitutions like this
+# ARCHIVE += <file>.archive
+# ARCHIVE += <file>.substitutions
+# ARCHIVE += <file>.template
+ARCHIVE += archive_SR.sub-arch
+ARCHIVE += archive_SR.tpl-arch
 REQ += configMenuNames.req
 REQ += configMenu.req
 REQ += configMenu_settings.req
