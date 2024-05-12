@@ -9,6 +9,7 @@
  ***********************************************/
 #include "osdNfs.h"
 
+#include <stdio.h>
 /**
  * Global variables
  */
@@ -66,7 +67,9 @@ int dismountFileSystem(char *mntpoint)
     /* check the input parameters */
     if (!mntpoint || !mntpoint[0]) return NFS_INVALID_MNTPOINT;
 
-    /* unmount the file system */
+	printf("dismountFileSystem(%s)\n", mntpoint);
+    
+	/* unmount the file system */
     if (unmount(mntpoint) == OK) {                     /* 0 - succeed; -1 - failed */
         save_restoreNFSOK    = 0;
         return NFS_SUCCESS;
