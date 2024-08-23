@@ -2552,6 +2552,9 @@ int set_savefile_path(char *path, char *pathsub)
 		if (saveRestoreFilePathIsMountPoint) {
 			strNcpy(saveRestoreFilePath, fullpath, NFS_PATH_LEN);
 			strNcpy(save_restoreNFSMntPoint, fullpath, NFS_PATH_LEN);
+		} else if (strstr(fullpath, save_restoreNFSMntPoint) == fullpath) {
+			/** If fullpath starts with the NFS mount point, don't concat them */
+			strNcpy(saveRestoreFilePath, fullpath, NFS_PATH_LEN);
 		} else {
 			makeNfsPath(saveRestoreFilePath, save_restoreNFSMntPoint, fullpath);
 		}
