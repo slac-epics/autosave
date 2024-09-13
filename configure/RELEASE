@@ -4,10 +4,11 @@
 
 TEMPLATE_TOP=$(EPICS_BASE)/templates/makeBaseApp/top
 
-SUPPORT=/APSshare/epics/synApps_6_0/support
+#SUPPORT=/APSshare/epics/synApps_6_0/support
 
 # EPICS_BASE usually appears last so other apps can override stuff:
-EPICS_BASE=/home/oxygen/MOONEY/epics/bazaar/base-3.14
+#EPICS_BASE=/home/oxygen/MOONEY/epics/bazaar/base-3.14
+#-include $(TOP)/../configure/EPICS_BASE.$(EPICS_HOST_ARCH)
 
 #Capfast users may need the following definitions
 #CAPFAST_TEMPLATES=
@@ -18,3 +19,10 @@ EPICS_BASE=/home/oxygen/MOONEY/epics/bazaar/base-3.14
 -include $(TOP)/../RELEASE.local
 -include $(TOP)/../RELEASE.$(EPICS_HOST_ARCH).local
 -include $(TOP)/configure/RELEASE.local
+
+# Check for valid macro definitions for module release directories
+# You can add tests here to make sure RELEASE.local defined valid
+# macros for all the module dependencies
+ifeq ($(wildcard $(EPICS_BASE)/include),)
+$(error Invalid EPICS_BASE: $(EPICS_BASE))
+endif
