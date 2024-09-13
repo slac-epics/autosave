@@ -3416,7 +3416,7 @@ STATIC int do_manual_restore(char *filename, int file_type, char *macrostring)
 		inp_fd = fopen(restoreFile, "r");
 	}
 	if (inp_fd == NULL) {
-		printf("save_restore:do_manual_restore: Can't open save file.");
+		printf("save_restore:do_manual_restore: Can't open save file.\n");
 		strNcpy(SR_recentlyStr, "Manual restore failed",STATUS_STR_LEN);
 		return(ERROR);
 	}
