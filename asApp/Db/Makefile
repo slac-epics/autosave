@@ -13,6 +13,13 @@ include $(TOP)/configure/CONFIG
 #DB += xxx.db
 DB += save_restoreStatus.db
 DB += configMenu.db
+DB += SR_test.db
+
+#----------------------------------------------------
+# Create and install (or just install)
+# Archive request files, templates, substitutions like this
+ARCHIVE += archive_SR.sub-arch
+ARCHIVE += archive_SR.tpl-arch
 
 REQ += configMenuNames.req
 REQ += configMenu.req

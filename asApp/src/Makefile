@@ -26,6 +26,7 @@ DBD += asSupport.dbd
 
 #include files
 INC += osdNfs.h
+INC += save_restore.h
 INC += autosave_release.h
 
 #=============================

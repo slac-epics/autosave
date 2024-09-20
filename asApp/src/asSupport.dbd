@@ -19,6 +19,7 @@ variable(save_restoreNumSeqFiles)
 variable(save_restoreSeqPeriodInSeconds)
 variable(save_restoreIncompleteSetsOk)
 variable(save_restoreDatedBackupFiles)
+variable(save_restoreLogMissingRecords)
 variable(save_restoreRemountThreshold)
 
 registrar(configMenuRegistrar)
