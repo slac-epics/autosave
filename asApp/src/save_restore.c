@@ -1842,7 +1842,15 @@ STATIC int write_it(char *filename, struct chlist *plist)
 				print_chmod_error(err);
 			}
 		}
-		out_fd = fdopen(filedes, "w");
+		if (!(out_fd = fdopen(filedes, "w"))) {
+			printf("save_restore:write_it - unable to fdopen file '%s': %s [%s]\n",
+				filename, strerror(errno), datetime);
+			if (++save_restoreIoErrors > save_restoreRemountThreshold) {
+				save_restoreNFSOK = 0;
+				strNcpy(SR_recentlyStr, "Too many I/O errors", STATUS_STR_LEN);
+			}
+			return (ERROR);
+		}
 	}
 #else
 	if ((out_fd = fopen(filename,"w")) == NULL) {
