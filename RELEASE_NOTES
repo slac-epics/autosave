@@ -1,5 +1,8 @@
 # RELEASE_NOTES
 #
+R5.11-2.1.0 2025-04-18  Jeremy Lorelli
+    Fixed crash when fdopen returns NULL fp
+
 R5.8-2.1.0	2017-09-06	Bruce Hill
 	Started from R5-8 but merged in changes from R5.7.1-2.branch
 		Added autosaveScreens directory w/ PCDS autosave screens
